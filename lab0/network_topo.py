@@ -19,7 +19,7 @@
 from mininet.topo import Topo
 
 class BridgeTopo(Topo):
-    "Creat a bridge-like customized network topology according to Figure 1 in the lab0 description."
+    "Create a bridge-like customized network topology according to Figure 1 in the lab0 description."
 
     def __init__(self):
 
