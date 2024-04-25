@@ -18,6 +18,7 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
+from ryu.controller.controller import Datapath
 from ryu.ofproto import ofproto_v1_3
 
 
@@ -59,6 +60,25 @@ class LearningSwitch(app_manager.RyuApp):
     def _packet_in_handler(self, ev):
         
         msg = ev.msg
-        datapath = msg.datapath
+        dp: Datapath = msg.datapath
+        ofp = dp.ofproto
+        ofp_parser = dp.ofproto_parser
 
-        # Your controller implementation should start here
+        in_port = msg.match["in_port"]
+        eth_src = int.from_bytes(msg.data[6:12], "big")
+
+        eth_src = f"00:00:00:00:00:0{eth_src}"
+        print(in_port, eth_src)
+        
+        self.add_flow(dp, 0, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)])
+
+        actions = [ofp_parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+
+        data = None
+        if msg.buffer_id == ofp.OFP_NO_BUFFER:
+            data = msg.data
+
+        out = ofp_parser.OFPPacketOut(
+            datapath=dp, buffer_id=msg.buffer_id, in_port=msg.match["in_port"],
+            actions=actions, data=data)
+        dp.send_msg(out)
