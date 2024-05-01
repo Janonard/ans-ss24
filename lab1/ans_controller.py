@@ -20,6 +20,8 @@ from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.controller.controller import Datapath
 from ryu.ofproto import ofproto_v1_3
+from ryu.lib.packet import packet, ethernet
+import datetime
 
 
 class LearningSwitch(app_manager.RyuApp):
@@ -42,17 +44,17 @@ class LearningSwitch(app_manager.RyuApp):
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
+        self.add_flow(datapath, match, actions, priority=0)
 
     # Add a flow entry to the flow-table
-    def add_flow(self, datapath, priority, match, actions):
+    def add_flow(self, datapath, match, actions, **kwargs):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         # Construct flow_mod message and send it
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
-                                match=match, instructions=inst)
+        mod = parser.OFPFlowMod(datapath=datapath,
+                                match=match, instructions=inst, **kwargs)
         datapath.send_msg(mod)
 
     # Handle the packet_in event
@@ -65,12 +67,12 @@ class LearningSwitch(app_manager.RyuApp):
         ofp_parser = dp.ofproto_parser
 
         in_port = msg.match["in_port"]
-        eth_src = int.from_bytes(msg.data[6:12], "big")
-
-        eth_src = f"00:00:00:00:00:0{eth_src}"
-        print(in_port, eth_src)
+        pkt = packet.Packet(msg.data)
+        eth_src = pkt.get_protocol(ethernet.ethernet).src
         
-        self.add_flow(dp, 0, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)])
+        print(datetime.datetime.now(), eth_src, in_port)
+        # Timeout is a little bit short, but easier to see that it works
+        self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)], idle_timeout=15, hard_timeout=15)
 
         actions = [ofp_parser.OFPActionOutput(ofp.OFPP_FLOOD)]
 
