@@ -112,7 +112,6 @@ class LearningSwitch(app_manager.RyuApp):
             # We are managing a router
             arp_pkt: arp.arp = pkt.get_protocol(arp.arp)
             ip_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
-            #print(datetime.datetime.now(), dp.id, eth_pkt.src, eth_pkt.dst, arp_pkt, ip_pkt)
 
             if arp_pkt is not None and arp_pkt.opcode == arp.ARP_REQUEST:
                 if arp_pkt.dst_ip == port_to_router_ip[in_port]:
@@ -139,3 +138,8 @@ class LearningSwitch(app_manager.RyuApp):
                     ip_pkt.ttl -= 1
 
                     self.send_new_message(dp, 1, pkt)
+
+            # TODO: Learn/remember target MAC addresses
+            # TODO: Routing to everywhere
+            # TODO: Pingable router
+            # TODO: Move rules to switch
