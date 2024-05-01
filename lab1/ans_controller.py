@@ -151,27 +151,45 @@ class LearningSwitch(app_manager.RyuApp):
 
                 print(datetime.now(), "IP", source, destination)
 
+                ip_pkt.ttl -= 1
+                if ip_pkt.ttl == 0:
+                    return
+                    # "Time exceeded" response not implemented for brevity.
+
                 # Make sure that connections don't leak out
-                if destination not in INTRANET or source not in INTRANET:
+                if destination in INTRANET and source not in INTRANET:
                     return
                 
-                port, _ = next(filter(lambda item: destination in item[1], SUBNETS.items()))
+                port, subnet = next(filter(lambda item: destination in item[1], SUBNETS.items()))
 
-                if destination in self.mac_addresses:
-                    eth_pkt.src = ROUTER_MAC[port]
-                    eth_pkt.dst = self.mac_addresses[destination]
-                    ip_pkt.ttl -= 1
+                if destination == ROUTER_IP[port]:
+                    icmp_pkt: icmp.icmp = pkt.get_protocol(icmp.icmp)
+                    if icmp_pkt is None or icmp_pkt.type != icmp.ICMP_ECHO_REQUEST or source not in subnet:
+                        return
+                    
+                    ip_pkt.src, ip_pkt.dst = ip_pkt.dst, ip_pkt.src
+                    eth_pkt.src, eth_pkt.dst = eth_pkt.dst, eth_pkt.src
+                    icmp_pkt.type = icmp.ICMP_ECHO_REPLY
+                    icmp_pkt.csum = 0
+                    ip_pkt.csum = 0
                     self.send_new_message(dp, port, pkt)
+                    
                 else:
-                    # Discard message, make ARP request for a future resend
-                    arp_request_pkt = packet.Packet()
-                    arp_request_pkt.add_protocol(
-                        ethernet.ethernet(src=ROUTER_MAC[port], ethertype=ethernet.ether.ETH_TYPE_ARP)
-                    )
-                    arp_request_pkt.add_protocol(
-                        arp.arp(src_mac=ROUTER_MAC[port], src_ip=ROUTER_IP[port], dst_ip=destination)
-                    )
-                    self.send_new_message(dp, port, arp_request_pkt)
-
-            # TODO: Pingable router
+                    eth_pkt.src = ROUTER_MAC[port]
+                    if destination in self.mac_addresses:
+                        eth_pkt.dst = self.mac_addresses[destination]
+                    else:
+                        # We don't know the destination MAC address yet. Broadcast the message
+                        # in the hope that it's useful to someone, and make an ARP request to be prepared next time.
+                        eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
+                        arp_request_pkt = packet.Packet()
+                        arp_request_pkt.add_protocol(
+                            ethernet.ethernet(src=ROUTER_MAC[port], ethertype=ethernet.ether.ETH_TYPE_ARP)
+                        )
+                        arp_request_pkt.add_protocol(
+                            arp.arp(src_mac=ROUTER_MAC[port], src_ip=ROUTER_IP[port], dst_ip=destination)
+                        )
+                        self.send_new_message(dp, port, arp_request_pkt)
+                    self.send_new_message(dp, port, pkt)
+                    
             # TODO: Move rules to switch
