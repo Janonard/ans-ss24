@@ -20,7 +20,7 @@ from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.controller.controller import Datapath
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.packet import packet, ethernet, arp
+from ryu.lib.packet import *
 import datetime
 
 port_to_router_mac = {
@@ -92,34 +92,50 @@ class LearningSwitch(app_manager.RyuApp):
         in_port = msg.match["in_port"]
         pkt = packet.Packet(msg.data)
         eth_pkt: ethernet.ethernet = pkt.get_protocol(ethernet.ethernet)
-        print(datetime.datetime.now(), eth_pkt.src, eth_pkt.dst)
 
-        eth_src = eth_pkt.src
-        # Timeout is a little bit short, but easier to see that it works
-        self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)], idle_timeout=15, hard_timeout=15)
+        if dp.id in [1, 2]:
+            # We are managing a switch
+            eth_src = eth_pkt.src
+            # Timeout is a little bit short, but easier to see that it works
+            self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)], idle_timeout=15, hard_timeout=15)
 
-        actions = [ofp_parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+            data = None
+            if msg.buffer_id == ofp.OFP_NO_BUFFER:
+                data = msg.data
 
-        data = None
-        if msg.buffer_id == ofp.OFP_NO_BUFFER:
-            data = msg.data
+            out = ofp_parser.OFPPacketOut(
+                datapath=dp, buffer_id=msg.buffer_id, in_port=msg.match["in_port"],
+                actions=[ofp_parser.OFPActionOutput(ofp.OFPP_FLOOD)], data=data)
+            dp.send_msg(out)
 
-        out = ofp_parser.OFPPacketOut(
-            datapath=dp, buffer_id=msg.buffer_id, in_port=msg.match["in_port"],
-            actions=actions, data=data)
-        dp.send_msg(out)
+        else:
+            # We are managing a router
+            arp_pkt: arp.arp = pkt.get_protocol(arp.arp)
+            ip_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
+            #print(datetime.datetime.now(), dp.id, eth_pkt.src, eth_pkt.dst, arp_pkt, ip_pkt)
 
-        arp_pkt: arp.arp = pkt.get_protocol(arp.arp)
-        if arp_pkt is not None and arp_pkt.opcode == arp.ARP_REQUEST:
-            if arp_pkt.dst_ip == port_to_router_ip[in_port]:
-                response_pkt = packet.Packet()
-                response_pkt.add_protocol(
-                    ethernet.ethernet(src=port_to_router_mac[in_port], dst=eth_pkt.src, ethertype=eth_pkt.ethertype)
-                )
-                response_pkt.add_protocol(
-                    arp.arp(opcode=arp.ARP_REPLY,
-                            src_mac=port_to_router_mac[in_port], src_ip=port_to_router_ip[in_port],
-                            dst_mac=arp_pkt.src_mac, dst_ip=arp_pkt.src_ip)
-                )
-                self.send_new_message(dp, in_port, response_pkt)
-                
+            if arp_pkt is not None and arp_pkt.opcode == arp.ARP_REQUEST:
+                if arp_pkt.dst_ip == port_to_router_ip[in_port]:
+                    response_pkt = packet.Packet()
+                    response_pkt.add_protocol(
+                        ethernet.ethernet(src=port_to_router_mac[in_port], dst=eth_pkt.src, ethertype=eth_pkt.ethertype)
+                    )
+                    response_pkt.add_protocol(
+                        arp.arp(opcode=arp.ARP_REPLY,
+                                src_mac=port_to_router_mac[in_port], src_ip=port_to_router_ip[in_port],
+                                dst_mac=arp_pkt.src_mac, dst_ip=arp_pkt.src_ip)
+                    )
+                    self.send_new_message(dp, in_port, response_pkt)
+            elif ip_pkt is not None:
+                if ip_pkt.dst == "10.0.2.2":
+                    eth_pkt.src = port_to_router_mac[2]
+                    eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
+                    ip_pkt.ttl -= 1
+
+                    self.send_new_message(dp, 2, pkt)
+                elif ip_pkt.dst == "10.0.1.2":
+                    eth_pkt.src = port_to_router_mac[1]
+                    eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
+                    ip_pkt.ttl -= 1
+
+                    self.send_new_message(dp, 1, pkt)

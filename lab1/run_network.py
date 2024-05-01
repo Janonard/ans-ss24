@@ -45,7 +45,7 @@ class NetworkTopo(Topo):
 
         for name in ["s1", "s2", "s3"]:
             nodes[name] = self.addSwitch(name)
-        for (a, b) in [("h1", "s1"), ("h2", "s1"), ("s1", "s3"), ("s3", "ext"), ("s3", "s2"), ("s2", "ser")]:
+        for (a, b) in [("h1", "s1"), ("h2", "s1"), ("s1", "s3"), ("s3", "s2"), ("s3", "ext"), ("s2", "ser")]:
             self.addLink(nodes[a], nodes[b], bw=15, delay='10ms')
 
 topos = {'network': (lambda: NetworkTopo())}
