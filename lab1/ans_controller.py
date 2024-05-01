@@ -21,19 +21,27 @@ from ryu.controller.handler import set_ev_cls
 from ryu.controller.controller import Datapath
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import *
-import datetime
+from ipaddress import IPv4Address, IPv4Network
 
-port_to_router_mac = {
+ROUTER_MAC = {
     1: "00:00:00:00:01:01",
     2: "00:00:00:00:01:02",
     3: "00:00:00:00:01:03",
 }
 
-port_to_router_ip = {
-    1: "10.0.1.1",
-    2: "10.0.2.1",
-    3: "192.168.1.1",
+ROUTER_IP = {
+    1: IPv4Address("10.0.1.1"),
+    2: IPv4Address("10.0.2.1"),
+    3: IPv4Address("192.168.1.1"),
 }
+
+SUBNETS = {
+    1: IPv4Network("10.0.1.0/24"),
+    2: IPv4Network("10.0.2.0/24"),
+    3: IPv4Network("192.168.0.0/16"),
+}
+
+INTRANET = IPv4Network("10.0.0.0/16")
 
 class LearningSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -114,32 +122,33 @@ class LearningSwitch(app_manager.RyuApp):
             ip_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
 
             if arp_pkt is not None and arp_pkt.opcode == arp.ARP_REQUEST:
-                if arp_pkt.dst_ip == port_to_router_ip[in_port]:
+                if IPv4Address(arp_pkt.dst_ip) == ROUTER_IP[in_port]:
                     response_pkt = packet.Packet()
                     response_pkt.add_protocol(
-                        ethernet.ethernet(src=port_to_router_mac[in_port], dst=eth_pkt.src, ethertype=eth_pkt.ethertype)
+                        ethernet.ethernet(src=ROUTER_MAC[in_port], dst=eth_pkt.src, ethertype=eth_pkt.ethertype)
                     )
                     response_pkt.add_protocol(
                         arp.arp(opcode=arp.ARP_REPLY,
-                                src_mac=port_to_router_mac[in_port], src_ip=port_to_router_ip[in_port],
+                                src_mac=ROUTER_MAC[in_port], src_ip=ROUTER_IP[in_port],
                                 dst_mac=arp_pkt.src_mac, dst_ip=arp_pkt.src_ip)
                     )
                     self.send_new_message(dp, in_port, response_pkt)
             elif ip_pkt is not None:
-                if ip_pkt.dst == "10.0.2.2":
-                    eth_pkt.src = port_to_router_mac[2]
-                    eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
-                    ip_pkt.ttl -= 1
+                source = IPv4Address(ip_pkt.src)
+                destination = IPv4Address(ip_pkt.dst)
 
-                    self.send_new_message(dp, 2, pkt)
-                elif ip_pkt.dst == "10.0.1.2":
-                    eth_pkt.src = port_to_router_mac[1]
-                    eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
-                    ip_pkt.ttl -= 1
+                # Make sure that connections don't leak out
+                if destination not in INTRANET or source not in INTRANET:
+                    return
+                
+                for port, subnet in SUBNETS.items():
+                    if destination in subnet:
+                        eth_pkt.src = ROUTER_MAC[port]
+                        eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
+                        ip_pkt.ttl -= 1
+                        self.send_new_message(dp, port, pkt)
+                        break
 
-                    self.send_new_message(dp, 1, pkt)
-
-            # TODO: Learn/remember target MAC addresses
-            # TODO: Routing to everywhere
             # TODO: Pingable router
             # TODO: Move rules to switch
+            # TODO: Learn/remember target MAC addresses
