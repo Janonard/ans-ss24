@@ -22,6 +22,7 @@ from ryu.controller.controller import Datapath
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import *
 from ipaddress import IPv4Address, IPv4Network
+from datetime import datetime
 
 ROUTER_MAC = {
     1: "00:00:00:00:01:01",
@@ -121,7 +122,9 @@ class LearningSwitch(app_manager.RyuApp):
             arp_pkt: arp.arp = pkt.get_protocol(arp.arp)
             ip_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
 
+
             if arp_pkt is not None and arp_pkt.opcode == arp.ARP_REQUEST:
+                print(datetime.now(), "ARP", arp_pkt.src_ip, arp_pkt.dst_ip)
                 if IPv4Address(arp_pkt.dst_ip) == ROUTER_IP[in_port]:
                     response_pkt = packet.Packet()
                     response_pkt.add_protocol(
@@ -136,6 +139,7 @@ class LearningSwitch(app_manager.RyuApp):
             elif ip_pkt is not None:
                 source = IPv4Address(ip_pkt.src)
                 destination = IPv4Address(ip_pkt.dst)
+                print(datetime.now(), "IP", source, destination)
 
                 # Make sure that connections don't leak out
                 if destination not in INTRANET or source not in INTRANET:
