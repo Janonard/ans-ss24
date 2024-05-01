@@ -39,7 +39,7 @@ ROUTER_IP = {
 SUBNETS = {
     1: IPv4Network("10.0.1.0/24"),
     2: IPv4Network("10.0.2.0/24"),
-    3: IPv4Network("192.168.0.0/16"),
+    3: IPv4Network("192.168.1.0/24"),
 }
 
 INTRANET = IPv4Network("10.0.0.0/16")
@@ -155,16 +155,20 @@ class LearningSwitch(app_manager.RyuApp):
                 if ip_pkt.ttl == 0:
                     return
                     # "Time exceeded" response not implemented for brevity.
+        
+                src_port, src_subnet = next(filter(lambda item: source in item[1], SUBNETS.items()))
+                dst_port, dst_subnet = next(filter(lambda item: destination in item[1], SUBNETS.items()))
+                icmp_pkt: icmp.icmp = pkt.get_protocol(icmp.icmp)
 
-                # Make sure that connections don't leak out
-                if destination in INTRANET and source not in INTRANET:
-                    return
-                
-                port, subnet = next(filter(lambda item: destination in item[1], SUBNETS.items()))
+                if {src_port, dst_port} == {2, 3}:
+                    return # Deny communication between external and datacenter hosts
+                elif {src_port, dst_port} == {1, 3} and icmp_pkt is not None and icmp_pkt.type == icmp.ICMP_ECHO_REQUEST:
+                    return # Deny pings between external hosts and workstations
+                    # Pings to datacenter hosts already excluded
 
-                if destination == ROUTER_IP[port]:
+                if destination == ROUTER_IP[dst_port]:
                     icmp_pkt: icmp.icmp = pkt.get_protocol(icmp.icmp)
-                    if icmp_pkt is None or icmp_pkt.type != icmp.ICMP_ECHO_REQUEST or source not in subnet:
+                    if icmp_pkt is None or icmp_pkt.type != icmp.ICMP_ECHO_REQUEST or source not in dst_subnet:
                         return
                     
                     ip_pkt.src, ip_pkt.dst = ip_pkt.dst, ip_pkt.src
@@ -172,10 +176,10 @@ class LearningSwitch(app_manager.RyuApp):
                     icmp_pkt.type = icmp.ICMP_ECHO_REPLY
                     icmp_pkt.csum = 0
                     ip_pkt.csum = 0
-                    self.send_new_message(dp, port, pkt)
+                    self.send_new_message(dp, dst_port, pkt)
                     
                 else:
-                    eth_pkt.src = ROUTER_MAC[port]
+                    eth_pkt.src = ROUTER_MAC[dst_port]
                     if destination in self.mac_addresses:
                         eth_pkt.dst = self.mac_addresses[destination]
                     else:
@@ -184,12 +188,12 @@ class LearningSwitch(app_manager.RyuApp):
                         eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
                         arp_request_pkt = packet.Packet()
                         arp_request_pkt.add_protocol(
-                            ethernet.ethernet(src=ROUTER_MAC[port], ethertype=ethernet.ether.ETH_TYPE_ARP)
+                            ethernet.ethernet(src=ROUTER_MAC[dst_port], ethertype=ethernet.ether.ETH_TYPE_ARP)
                         )
                         arp_request_pkt.add_protocol(
-                            arp.arp(src_mac=ROUTER_MAC[port], src_ip=ROUTER_IP[port], dst_ip=destination)
+                            arp.arp(src_mac=ROUTER_MAC[dst_port], src_ip=ROUTER_IP[dst_port], dst_ip=destination)
                         )
-                        self.send_new_message(dp, port, arp_request_pkt)
-                    self.send_new_message(dp, port, pkt)
+                        self.send_new_message(dp, dst_port, arp_request_pkt)
+                    self.send_new_message(dp, dst_port, pkt)
                     
             # TODO: Move rules to switch
