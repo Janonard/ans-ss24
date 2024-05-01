@@ -50,6 +50,8 @@ class LearningSwitch(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(LearningSwitch, self).__init__(*args, **kwargs)
 
+        self.mac_addresses = dict()
+
         # Here you can initialize the data structures you want to keep at the controller
         
 
@@ -123,9 +125,13 @@ class LearningSwitch(app_manager.RyuApp):
             ip_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
 
 
-            if arp_pkt is not None and arp_pkt.opcode == arp.ARP_REQUEST:
+            if arp_pkt is not None:
                 print(datetime.now(), "ARP", arp_pkt.src_ip, arp_pkt.dst_ip)
-                if IPv4Address(arp_pkt.dst_ip) == ROUTER_IP[in_port]:
+
+                # Add MAC to IP-MAC translation table.
+                self.mac_addresses[IPv4Address(arp_pkt.src_ip)] = arp_pkt.src_mac
+
+                if arp_pkt.opcode == arp.ARP_REQUEST and IPv4Address(arp_pkt.dst_ip) == ROUTER_IP[in_port]:
                     response_pkt = packet.Packet()
                     response_pkt.add_protocol(
                         ethernet.ethernet(src=ROUTER_MAC[in_port], dst=eth_pkt.src, ethertype=eth_pkt.ethertype)
@@ -139,20 +145,33 @@ class LearningSwitch(app_manager.RyuApp):
             elif ip_pkt is not None:
                 source = IPv4Address(ip_pkt.src)
                 destination = IPv4Address(ip_pkt.dst)
+
+                # Add MAC to IP-MAC translation table.
+                self.mac_addresses[source] = eth_pkt.src
+
                 print(datetime.now(), "IP", source, destination)
 
                 # Make sure that connections don't leak out
                 if destination not in INTRANET or source not in INTRANET:
                     return
                 
-                for port, subnet in SUBNETS.items():
-                    if destination in subnet:
-                        eth_pkt.src = ROUTER_MAC[port]
-                        eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
-                        ip_pkt.ttl -= 1
-                        self.send_new_message(dp, port, pkt)
-                        break
+                port, _ = next(filter(lambda item: destination in item[1], SUBNETS.items()))
+
+                if destination in self.mac_addresses:
+                    eth_pkt.src = ROUTER_MAC[port]
+                    eth_pkt.dst = self.mac_addresses[destination]
+                    ip_pkt.ttl -= 1
+                    self.send_new_message(dp, port, pkt)
+                else:
+                    # Discard message, make ARP request for a future resend
+                    arp_request_pkt = packet.Packet()
+                    arp_request_pkt.add_protocol(
+                        ethernet.ethernet(src=ROUTER_MAC[port], ethertype=ethernet.ether.ETH_TYPE_ARP)
+                    )
+                    arp_request_pkt.add_protocol(
+                        arp.arp(src_mac=ROUTER_MAC[port], src_ip=ROUTER_IP[port], dst_ip=destination)
+                    )
+                    self.send_new_message(dp, port, arp_request_pkt)
 
             # TODO: Pingable router
             # TODO: Move rules to switch
-            # TODO: Learn/remember target MAC addresses
