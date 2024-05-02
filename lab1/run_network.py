@@ -39,16 +39,18 @@ class NetworkTopo(Topo):
         nodes = dict()
         for (name, data) in hosts.items():
             nodes[name] = self.addHost(name,
-                                            ip=data["ip"],
-                                            defaultRoute=f"via {data['gateway']}"
-                                            )
+                                       ip=data["ip"],
+                                       defaultRoute=f"via {data['gateway']}"
+                                       )
 
         for name in ["s1", "s2", "s3"]:
             nodes[name] = self.addSwitch(name)
         for (a, b) in [("h1", "s1"), ("h2", "s1"), ("s1", "s3"), ("s3", "s2"), ("s3", "ext"), ("s2", "ser")]:
             self.addLink(nodes[a], nodes[b], bw=15, delay='10ms')
 
+
 topos = {'network': (lambda: NetworkTopo())}
+
 
 def run():
     topo = NetworkTopo()
@@ -57,13 +59,14 @@ def run():
                   link=TCLink,
                   controller=None)
     net.addController(
-        'c1', 
-        controller=RemoteController, 
-        ip="127.0.0.1", 
+        'c1',
+        controller=RemoteController,
+        ip="127.0.0.1",
         port=6653)
     net.start()
     CLI(net)
     net.stop()
+
 
 if __name__ == '__main__':
     setLogLevel('info')
