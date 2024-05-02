@@ -51,6 +51,7 @@ class LearningSwitch(app_manager.RyuApp):
         super(LearningSwitch, self).__init__(*args, **kwargs)
 
         self.mac_addresses = dict()
+        self.ports_to_mac_addresses = dict()
 
         # Here you can initialize the data structures you want to keep at the controller
         
@@ -77,6 +78,16 @@ class LearningSwitch(app_manager.RyuApp):
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
         mod = parser.OFPFlowMod(datapath=datapath,
                                 match=match, instructions=inst, **kwargs)
+        datapath.send_msg(mod)
+
+    # Add a flow entry to the flow-table
+    def del_flow(self, datapath, match, **kwargs):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Construct flow_mod message and send it
+        mod = parser.OFPFlowMod(datapath=datapath,
+                                match=match, command=ofproto.OFPFC_DELETE, **kwargs)
         datapath.send_msg(mod)
 
     def send_new_message(self, dp, out_port, data):
@@ -106,27 +117,36 @@ class LearningSwitch(app_manager.RyuApp):
 
         if dp.id in [1, 2]:
             # We are managing a switch
-            eth_src = eth_pkt.src
+            print(dp.id, datetime.now(), "ETH", eth_pkt.src, eth_pkt.dst)
+
             # Timeout is a little bit short, but easier to see that it works
-            self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)], hard_timeout=10)
+            
+            self.ports_to_mac_addresses[eth_pkt.src] = in_port
 
-            data = None
-            if msg.buffer_id == ofp.OFP_NO_BUFFER:
-                data = msg.data
+            if eth_pkt.dst == "ff:ff:ff:ff:ff:ff":
+                self.send_new_message(dp, ofp.OFPP_FLOOD, pkt)
+                self.add_flow(
+                    dp,
+                    ofp_parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff"),
+                    [ofp_parser.OFPActionOutput(ofp.OFPP_FLOOD)],
+                    priority=1
+                )
+            elif eth_pkt.dst in self.ports_to_mac_addresses:
+                out_port = self.ports_to_mac_addresses[eth_pkt.dst]
+                self.send_new_message(dp, out_port, pkt)
 
-            out = ofp_parser.OFPPacketOut(
-                datapath=dp, buffer_id=msg.buffer_id, in_port=msg.match["in_port"],
-                actions=[ofp_parser.OFPActionOutput(ofp.OFPP_FLOOD)], data=data)
-            dp.send_msg(out)
+                self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_pkt.src), [ofp_parser.OFPActionOutput(in_port)], priority=1, hard_timeout=10)
+                self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_pkt.dst), [ofp_parser.OFPActionOutput(out_port)], priority=1, hard_timeout=10)
+            else:
+                self.send_new_message(dp, ofp.OFPP_FLOOD, pkt)
 
         else:
             # We are managing a router
             arp_pkt: arp.arp = pkt.get_protocol(arp.arp)
             ip_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
 
-
             if arp_pkt is not None:
-                print(datetime.now(), "ARP", arp_pkt.src_ip, arp_pkt.dst_ip)
+                print(dp.id, datetime.now(), "ARP", arp_pkt.src_ip, arp_pkt.dst_ip)
 
                 # Add MAC to IP-MAC translation table.
                 self.mac_addresses[IPv4Address(arp_pkt.src_ip)] = arp_pkt.src_mac
@@ -146,14 +166,7 @@ class LearningSwitch(app_manager.RyuApp):
                 source = IPv4Address(ip_pkt.src)
                 destination = IPv4Address(ip_pkt.dst)
 
-                if eth_pkt.src in ROUTER_MAC.values():
-                    print("A packet by me!")
-                    return
-
-                # Add MAC to IP-MAC translation table.
-                self.mac_addresses[source] = eth_pkt.src
-
-                print(datetime.now(), "IP", source, destination)
+                print(dp.id, datetime.now(), "IP", source, destination)
 
                 ip_pkt.ttl -= 1
                 if ip_pkt.ttl == 0:
@@ -164,7 +177,13 @@ class LearningSwitch(app_manager.RyuApp):
                 dst_port, dst_subnet = next(filter(lambda item: destination in item[1], SUBNETS.items()))
                 icmp_pkt: icmp.icmp = pkt.get_protocol(icmp.icmp)
 
-                if {src_port, dst_port} == {2, 3}:
+                # Add MAC to IP-MAC translation table.
+                if source in SUBNETS[in_port]:
+                    self.mac_addresses[source] = eth_pkt.src
+
+                if eth_pkt.dst != ROUTER_MAC[src_port]:
+                    return # This packet is not meant for us.
+                elif {src_port, dst_port} == {2, 3}:
                     return # Deny communication between external and datacenter hosts
                 elif {src_port, dst_port} == {1, 3} and icmp_pkt is not None and icmp_pkt.type == icmp.ICMP_ECHO_REQUEST:
                     return # Deny pings between external hosts and workstations
