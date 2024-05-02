@@ -44,7 +44,7 @@ SUBNETS = {
 
 INTRANET = IPv4Network("10.0.0.0/16")
 
-KNOWLEDGE_TTL = 10
+KNOWLEDGE_TTL = 10 # Short TTL for demonstration, usually we would pick 300-600
 
 BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 
@@ -57,8 +57,6 @@ class LearningSwitch(app_manager.RyuApp):
 
         self.mac_addresses = dict()
         self.ports_to_mac_addresses = dict()
-
-        # Here you can initialize the data structures you want to keep at the controller
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -85,7 +83,7 @@ class LearningSwitch(app_manager.RyuApp):
                                 match=match, instructions=inst, **kwargs)
         datapath.send_msg(mod)
 
-    # Add a flow entry to the flow-table
+    # Delete flow entry from the flow-table
     def del_flow(self, datapath, match, **kwargs):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -95,6 +93,7 @@ class LearningSwitch(app_manager.RyuApp):
                                 match=match, command=ofproto.OFPFC_DELETE, **kwargs)
         datapath.send_msg(mod)
 
+    # Send datapacket from specified port
     def send_packet(self, dp, out_port, data):
         ofp = dp.ofproto
         ofp_parser = dp.ofproto_parser
@@ -120,15 +119,14 @@ class LearningSwitch(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         eth_pkt: ethernet.ethernet = pkt.get_protocol(ethernet.ethernet)
 
+        # Packet is from a switch   
         if dp.id in [1, 2]:
-            # We are managing a switch
             print(dp.id, datetime.now(), "ETH", eth_pkt.src, eth_pkt.dst)
-
-            # Timeout is a little bit short, but easier to see that it works
 
             self.ports_to_mac_addresses[eth_pkt.src] = (
                 in_port, datetime.now() + timedelta(seconds=KNOWLEDGE_TTL))
 
+            # Broadcast
             if eth_pkt.dst == BROADCAST_MAC:
                 self.send_packet(dp, ofp.OFPP_FLOOD, pkt)
                 self.add_flow(
@@ -139,6 +137,7 @@ class LearningSwitch(app_manager.RyuApp):
                 )
                 return
 
+            # Port known
             if eth_pkt.dst in self.ports_to_mac_addresses:
                 out_port, deadline = self.ports_to_mac_addresses[eth_pkt.dst]
                 if deadline >= datetime.now():
@@ -149,16 +148,20 @@ class LearningSwitch(app_manager.RyuApp):
                 else:
                     out_port = ofp.OFPP_FLOOD
                     del self.ports_to_mac_addresses[eth_pkt.dst]
+
+            # Send to all ports
             else:
                 out_port = ofp.OFPP_FLOOD
 
+            # Send the packet
             self.send_packet(dp, out_port, pkt)
 
+        # Packet is from a router
         else:
-            # We are managing a router
             arp_pkt: arp.arp = pkt.get_protocol(arp.arp)
             ip_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
 
+            # Packet is an ARP request
             if arp_pkt is not None:
                 print(dp.id, datetime.now(), "ARP",
                       arp_pkt.src_ip, arp_pkt.dst_ip)
@@ -167,6 +170,7 @@ class LearningSwitch(app_manager.RyuApp):
                 self.mac_addresses[IPv4Address(arp_pkt.src_ip)] = (
                     arp_pkt.src_mac, datetime.now() + timedelta(seconds=KNOWLEDGE_TTL))
 
+                # ARP request to router IP
                 if arp_pkt.opcode == arp.ARP_REQUEST and IPv4Address(arp_pkt.dst_ip) == ROUTER_IP[in_port]:
                     response_pkt = packet.Packet()
                     response_pkt.add_protocol(
@@ -179,6 +183,8 @@ class LearningSwitch(app_manager.RyuApp):
                                 dst_mac=arp_pkt.src_mac, dst_ip=arp_pkt.src_ip)
                     )
                     self.send_packet(dp, in_port, response_pkt)
+
+            # Packet is an IP packet
             elif ip_pkt is not None:
                 source = IPv4Address(ip_pkt.src)
                 destination = IPv4Address(ip_pkt.dst)
@@ -187,8 +193,7 @@ class LearningSwitch(app_manager.RyuApp):
 
                 ip_pkt.ttl -= 1
                 if ip_pkt.ttl == 0:
-                    return
-                    # "Time exceeded" response not implemented for brevity.
+                    return # "Time exceeded" response not implemented for brevity.
 
                 src_port, src_subnet = next(
                     filter(lambda item: source in item[1], SUBNETS.items()))
@@ -202,13 +207,14 @@ class LearningSwitch(app_manager.RyuApp):
                         eth_pkt.src, datetime.now() + timedelta(seconds=KNOWLEDGE_TTL))
 
                 if eth_pkt.dst != ROUTER_MAC[src_port]:
-                    return  # This packet is not meant for us.
+                    return  # This packet is not meant for the router.
                 elif {src_port, dst_port} == {2, 3}:
                     return  # Deny communication between external and datacenter hosts
                 elif {src_port, dst_port} == {1, 3} and icmp_pkt is not None and icmp_pkt.type == icmp.ICMP_ECHO_REQUEST:
                     return  # Deny pings between external hosts and workstations
                     # Pings to datacenter hosts already excluded
 
+                # ICMP request to the router
                 if destination == ROUTER_IP[dst_port]:
                     icmp_pkt: icmp.icmp = pkt.get_protocol(icmp.icmp)
                     if icmp_pkt is None or icmp_pkt.type != icmp.ICMP_ECHO_REQUEST or source not in dst_subnet:
