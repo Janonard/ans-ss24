@@ -108,7 +108,7 @@ class LearningSwitch(app_manager.RyuApp):
             # We are managing a switch
             eth_src = eth_pkt.src
             # Timeout is a little bit short, but easier to see that it works
-            self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)], idle_timeout=15, hard_timeout=15)
+            self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_src), [ofp_parser.OFPActionOutput(in_port)], hard_timeout=10)
 
             data = None
             if msg.buffer_id == ofp.OFP_NO_BUFFER:
@@ -196,7 +196,7 @@ class LearningSwitch(app_manager.RyuApp):
                             ofp_parser.OFPActionSetField(eth_src=ROUTER_MAC[dst_port]),
                             ofp_parser.OFPActionSetField(eth_dst=self.mac_addresses[destination]),
                             ofp_parser.OFPActionOutput(dst_port),
-                        ], hard_timeout=30)
+                        ], hard_timeout=10)
 
                         eth_pkt.src = ROUTER_MAC[dst_port]
                         eth_pkt.dst = self.mac_addresses[destination]
@@ -217,5 +217,3 @@ class LearningSwitch(app_manager.RyuApp):
                             arp.arp(src_mac=ROUTER_MAC[dst_port], src_ip=ROUTER_IP[dst_port], dst_ip=destination)
                         )
                         self.send_new_message(dp, dst_port, arp_request_pkt)
-                    
-            # TODO: Move rules to switch
