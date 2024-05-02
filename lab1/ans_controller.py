@@ -22,7 +22,7 @@ from ryu.controller.controller import Datapath
 from ryu.ofproto import ofproto_v1_3, ofproto_v1_3_parser
 from ryu.lib.packet import *
 from ipaddress import IPv4Address, IPv4Network
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ROUTER_MAC = {
     1: "00:00:00:00:01:01",
@@ -43,6 +43,10 @@ SUBNETS = {
 }
 
 INTRANET = IPv4Network("10.0.0.0/16")
+
+KNOWLEDGE_TTL = 10
+
+BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 
 class LearningSwitch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -121,24 +125,30 @@ class LearningSwitch(app_manager.RyuApp):
 
             # Timeout is a little bit short, but easier to see that it works
             
-            self.ports_to_mac_addresses[eth_pkt.src] = in_port
+            self.ports_to_mac_addresses[eth_pkt.src] = (in_port, datetime.now() + timedelta(seconds=KNOWLEDGE_TTL))
 
-            if eth_pkt.dst == "ff:ff:ff:ff:ff:ff":
+            if eth_pkt.dst == BROADCAST_MAC:
                 self.send_new_message(dp, ofp.OFPP_FLOOD, pkt)
                 self.add_flow(
                     dp,
-                    ofp_parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff"),
+                    ofp_parser.OFPMatch(eth_dst=BROADCAST_MAC),
                     [ofp_parser.OFPActionOutput(ofp.OFPP_FLOOD)],
                     priority=1
                 )
-            elif eth_pkt.dst in self.ports_to_mac_addresses:
-                out_port = self.ports_to_mac_addresses[eth_pkt.dst]
-                self.send_new_message(dp, out_port, pkt)
-
-                self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_pkt.src), [ofp_parser.OFPActionOutput(in_port)], priority=1, hard_timeout=10)
-                self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_pkt.dst), [ofp_parser.OFPActionOutput(out_port)], priority=1, hard_timeout=10)
+                return
+            
+            if eth_pkt.dst in self.ports_to_mac_addresses:
+                out_port, deadline = self.ports_to_mac_addresses[eth_pkt.dst]
+                if deadline >= datetime.now():
+                    self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_pkt.src), [ofp_parser.OFPActionOutput(in_port)], priority=1, hard_timeout=10)
+                    self.add_flow(dp, ofp_parser.OFPMatch(eth_dst=eth_pkt.dst), [ofp_parser.OFPActionOutput(out_port)], priority=1, hard_timeout=10)
+                else:
+                    out_port = ofp.OFPP_FLOOD
+                    del self.ports_to_mac_addresses[eth_pkt.dst]
             else:
-                self.send_new_message(dp, ofp.OFPP_FLOOD, pkt)
+                out_port = ofp.OFPP_FLOOD
+
+            self.send_new_message(dp, out_port, pkt)
 
         else:
             # We are managing a router
@@ -149,7 +159,7 @@ class LearningSwitch(app_manager.RyuApp):
                 print(dp.id, datetime.now(), "ARP", arp_pkt.src_ip, arp_pkt.dst_ip)
 
                 # Add MAC to IP-MAC translation table.
-                self.mac_addresses[IPv4Address(arp_pkt.src_ip)] = arp_pkt.src_mac
+                self.mac_addresses[IPv4Address(arp_pkt.src_ip)] = (arp_pkt.src_mac, datetime.now() + timedelta(seconds=KNOWLEDGE_TTL))
 
                 if arp_pkt.opcode == arp.ARP_REQUEST and IPv4Address(arp_pkt.dst_ip) == ROUTER_IP[in_port]:
                     response_pkt = packet.Packet()
@@ -179,7 +189,7 @@ class LearningSwitch(app_manager.RyuApp):
 
                 # Add MAC to IP-MAC translation table.
                 if source in SUBNETS[in_port]:
-                    self.mac_addresses[source] = eth_pkt.src
+                    self.mac_addresses[source] = (eth_pkt.src, datetime.now() + timedelta(seconds=KNOWLEDGE_TTL))
 
                 if eth_pkt.dst != ROUTER_MAC[src_port]:
                     return # This packet is not meant for us.
@@ -203,31 +213,35 @@ class LearningSwitch(app_manager.RyuApp):
                     
                 else:
                     if destination in self.mac_addresses:
+                        dst_mac, deadline = self.mac_addresses[destination]
 
-                        self.add_flow(dp, ofp_parser.OFPMatch(
-                            eth_type=ethernet.ether.ETH_TYPE_IP,
-                            # Forward all messages from the source subnet since the firewall treats 
-                            # it as one.
-                            ipv4_src=(src_subnet.network_address, src_subnet.netmask),
-                            ipv4_dst=destination
-                        ), [
-                            ofp_parser.OFPActionDecNwTtl(), # Automatically discards messages with TTL==0
-                            ofp_parser.OFPActionSetField(eth_src=ROUTER_MAC[dst_port]),
-                            ofp_parser.OFPActionSetField(eth_dst=self.mac_addresses[destination]),
-                            ofp_parser.OFPActionOutput(dst_port),
-                        ], hard_timeout=10)
-
-                        eth_pkt.src = ROUTER_MAC[dst_port]
-                        eth_pkt.dst = self.mac_addresses[destination]
-                        self.send_new_message(dp, dst_port, pkt)
-
+                        if deadline >= datetime.now():
+                            self.add_flow(dp, ofp_parser.OFPMatch(
+                                eth_type=ethernet.ether.ETH_TYPE_IP,
+                                # Forward all messages from the source subnet since the firewall treats 
+                                # it as one.
+                                ipv4_src=(src_subnet.network_address, src_subnet.netmask),
+                                ipv4_dst=destination
+                            ), [
+                                ofp_parser.OFPActionDecNwTtl(), # Automatically discards messages with TTL==0
+                                ofp_parser.OFPActionSetField(eth_src=ROUTER_MAC[dst_port]),
+                                ofp_parser.OFPActionSetField(eth_dst=dst_mac),
+                                ofp_parser.OFPActionOutput(dst_port),
+                            ], hard_timeout=10)
+                            eth_pkt.dst = dst_mac
+                        else:
+                            eth_pkt.dst = BROADCAST_MAC
+                            del self.mac_addresses[destination]
                     else:
+                        eth_pkt.dst = BROADCAST_MAC
+
+                    
+                    eth_pkt.src = ROUTER_MAC[dst_port]
+                    self.send_new_message(dp, dst_port, pkt)
+                    
+                    if eth_pkt.dst == BROADCAST_MAC:
                         # We don't know the destination MAC address yet. Broadcast the message
                         # in the hope that it's useful to someone, and make an ARP request to be prepared next time.
-                        eth_pkt.src = ROUTER_MAC[dst_port]
-                        eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
-                        self.send_new_message(dp, dst_port, pkt)
-                        
                         arp_request_pkt = packet.Packet()
                         arp_request_pkt.add_protocol(
                             ethernet.ethernet(src=ROUTER_MAC[dst_port], ethertype=ethernet.ether.ETH_TYPE_ARP)
