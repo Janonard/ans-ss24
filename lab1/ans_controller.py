@@ -19,7 +19,7 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.controller.controller import Datapath
-from ryu.ofproto import ofproto_v1_3
+from ryu.ofproto import ofproto_v1_3, ofproto_v1_3_parser
 from ryu.lib.packet import *
 from ipaddress import IPv4Address, IPv4Network
 from datetime import datetime
@@ -98,7 +98,7 @@ class LearningSwitch(app_manager.RyuApp):
         msg = ev.msg
         dp: Datapath = msg.datapath
         ofp = dp.ofproto
-        ofp_parser = dp.ofproto_parser
+        ofp_parser: ofproto_v1_3_parser = dp.ofproto_parser
 
         in_port = msg.match["in_port"]
         pkt = packet.Packet(msg.data)
@@ -146,6 +146,10 @@ class LearningSwitch(app_manager.RyuApp):
                 source = IPv4Address(ip_pkt.src)
                 destination = IPv4Address(ip_pkt.dst)
 
+                if eth_pkt.src in ROUTER_MAC.values():
+                    print("A packet by me!")
+                    return
+
                 # Add MAC to IP-MAC translation table.
                 self.mac_addresses[source] = eth_pkt.src
 
@@ -179,13 +183,32 @@ class LearningSwitch(app_manager.RyuApp):
                     self.send_new_message(dp, dst_port, pkt)
                     
                 else:
-                    eth_pkt.src = ROUTER_MAC[dst_port]
                     if destination in self.mac_addresses:
+
+                        self.add_flow(dp, ofp_parser.OFPMatch(
+                            eth_type=ethernet.ether.ETH_TYPE_IP,
+                            # Forward all messages from the source subnet since the firewall treats 
+                            # it as one.
+                            ipv4_src=(src_subnet.network_address, src_subnet.netmask),
+                            ipv4_dst=destination
+                        ), [
+                            ofp_parser.OFPActionDecNwTtl(), # Automatically discards messages with TTL==0
+                            ofp_parser.OFPActionSetField(eth_src=ROUTER_MAC[dst_port]),
+                            ofp_parser.OFPActionSetField(eth_dst=self.mac_addresses[destination]),
+                            ofp_parser.OFPActionOutput(dst_port),
+                        ], hard_timeout=30)
+
+                        eth_pkt.src = ROUTER_MAC[dst_port]
                         eth_pkt.dst = self.mac_addresses[destination]
+                        self.send_new_message(dp, dst_port, pkt)
+
                     else:
                         # We don't know the destination MAC address yet. Broadcast the message
                         # in the hope that it's useful to someone, and make an ARP request to be prepared next time.
+                        eth_pkt.src = ROUTER_MAC[dst_port]
                         eth_pkt.dst = "ff:ff:ff:ff:ff:ff"
+                        self.send_new_message(dp, dst_port, pkt)
+                        
                         arp_request_pkt = packet.Packet()
                         arp_request_pkt.add_protocol(
                             ethernet.ethernet(src=ROUTER_MAC[dst_port], ethertype=ethernet.ether.ETH_TYPE_ARP)
@@ -194,6 +217,5 @@ class LearningSwitch(app_manager.RyuApp):
                             arp.arp(src_mac=ROUTER_MAC[dst_port], src_ip=ROUTER_IP[dst_port], dst_ip=destination)
                         )
                         self.send_new_message(dp, dst_port, arp_request_pkt)
-                    self.send_new_message(dp, dst_port, pkt)
                     
             # TODO: Move rules to switch
