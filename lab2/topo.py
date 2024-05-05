@@ -64,6 +64,7 @@ class Jellyfish:
 	def generate(self, num_servers, num_switches, num_ports):
 		
 		# TODO: code for generating the jellyfish topology
+		pass
 
 class Fattree:
 
@@ -75,3 +76,4 @@ class Fattree:
 	def generate(self, num_ports):
 
 		# TODO: code for generating the fat-tree topology
+		pass
