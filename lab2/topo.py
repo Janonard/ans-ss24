@@ -96,6 +96,41 @@ class Topology(object):
                         f"\t{edge.lnode.label} -- {edge.rnode.label};")
         return "graph {\n" + "\n".join(node_lines) + "\n" + "\n".join(edge_lines) + "\n}"
 
+    def sanity_checks(self):
+        # Server and Switch lists are clean
+        assert (all(s.type == "h" for s in self.servers))
+        assert (all(s.type == "s" for s in self.switches))
+
+        for node in chain(self.servers, self.switches):
+            for edge in node.edges:
+                # All nodes are actually part of their edges
+                assert (edge.lnode is node or edge.rnode is node)
+
+                # Edges don't lead out of the topology
+                assert (edge.lnode in self.servers or edge.lnode in self.switches)
+                assert (edge.rnode in self.servers or edge.rnode in self.switches)
+
+        # Each server is connected to one, and only one, switch
+        for s in self.servers:
+            assert (len(s.edges) == 1)
+            e = s.edges[0]
+            if e.lnode is s:
+                assert (e.rnode.type == "s")
+            else:
+                assert (e.lnode.type == "s")
+
+        # The topology is connected (do a BFS)
+        missing_nodes = set(chain(self.servers, self.switches))
+        queue = [self.servers[0]]
+        while len(queue) > 0:
+            current_node = queue.pop(0)
+            for edge in current_node.edges:
+                other_node = edge.lnode if edge.rnode is current_node else edge.rnode
+                if other_node in missing_nodes:
+                    queue.append(other_node)
+                    missing_nodes.remove(other_node)
+        assert (len(missing_nodes) == 0)
+
 
 class Jellyfish(Topology):
     """
@@ -177,7 +212,7 @@ class Fattree(Topology):
 
 
 if __name__ == "__main__":
-    topo = Jellyfish(16*16, 15, 24)
+    topo = Jellyfish(686, 245, 14)
+    topo.sanity_checks()
     with open("jellyfish.dot", mode="w") as f:
         f.write(topo.to_dot())
-    print("Topology written")
