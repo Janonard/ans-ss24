@@ -198,7 +198,7 @@ class Jellyfish(Topology):
 
 class Fattree(Topology):
     """
-    Implementation of the fat tree topology
+    Implementation of the fat tree topology.
     """
 
     def __init__(self, num_ports):
@@ -207,12 +207,46 @@ class Fattree(Topology):
 
     def generate(self, num_ports):
 
-        # TODO: code for generating the fat-tree topology
-        pass
+        num_ports_half = int(num_ports / 2)
+        
+        # Create core switches
+        self.switches = [Node(i, "s") for i in range(0, num_ports_half ** 2)]
+
+        # Create pods
+        for pod in range(0, num_ports):
+
+            for i in range(0, num_ports_half):
+                # Create (k/2) edge switches
+                self.switches.append(Node(len(self.switches), "s"))
+                
+                for j in range(0, num_ports_half):
+                    # Add (k/2) servers per edge switch
+                    self.servers.append(Node(len(self.servers), "h"))
+
+                    # Add edge: edge - server
+                    self.switches[-1].add_edge(self.servers[-1])
+            
+            for i in range(0, num_ports_half):
+                # Create (k/2) aggregation switches
+                self.switches.append(Node(len(self.switches), "s"))
+
+                # Add edges (cartesian product): edge - aggregation 
+                for edge_switch in self.switches[-num_ports_half - 1 - i : -1 - i]:
+                    edge_switch.add_edge(self.switches[-1])
+
+                # Add edges: core - aggregation
+                for core_switch in self.switches[i * num_ports_half : (i + 1) * num_ports_half]:
+                    core_switch.add_edge(self.switches[-1])
+
 
 
 if __name__ == "__main__":
-    topo = Jellyfish(686, 245, 14)
-    topo.sanity_checks()
+    topo_jellyfish = Jellyfish(686, 245, 14)
+    topo_jellyfish.sanity_checks()
     with open("jellyfish.dot", mode="w") as f:
-        f.write(topo.to_dot())
+        f.write(topo_jellyfish.to_dot())
+
+    topo_fattree = Fattree(14)
+    topo_fattree.sanity_checks()
+    with open("fattree.dot", mode="w") as f:
+        f.write(topo_fattree.to_dot())
