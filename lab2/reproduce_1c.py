@@ -15,13 +15,53 @@
  """
 
 import topo
+from matplotlib import pyplot
 
 # Same setup for Jellyfish and fat-tree
 num_servers = 686
 num_switches = 245
 num_ports = 14
 
-ft_topo = topo.Fattree(num_ports)
-jf_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
+def make_connectivity_stats(topo):
+    paths = topo.all_server_pairs_shortest_paths()
+    stats = dict()
+    for path in paths.values():
+        length = len(path) - 1
+        if length not in stats:
+            stats[length] = 1
+        else:
+            stats[length] += 1
+    del stats[0]
+    n_pairs = sum(stats.values())
+    return {length: count / n_pairs for (length, count) in stats.items()}
 
-# TODO: code for reproducing Figure 1(c) in the jellyfish paper
+print("Computing the stats for the fat tree...")
+ft_topo = topo.Fattree(14)
+ft_stats = make_connectivity_stats(ft_topo)
+print("Done!")
+print()
+
+print("Computing the stats for Jellyfish...")
+mean_jl_stats = dict()
+for i in range(0, 10):
+    jl_topo = topo.Jellyfish(686, 245, 14)
+    jl_stats = make_connectivity_stats(jl_topo)
+    for (length, count) in jl_stats.items():
+        if length not in mean_jl_stats:
+            mean_jl_stats[length] = [count]
+        else:
+            mean_jl_stats[length].append(count)
+jl_stats = {length: sum(count) / len(count) for (length, count) in mean_jl_stats.items()}
+print("Done!")
+
+pyplot.figure()
+pyplot.ylim((0, 1.0))
+pyplot.yticks([i / 10.0 for i in range(0, 11)])
+pyplot.grid(True, linestyle="--")
+pyplot.ylabel("Fraction of Server Pairs")
+pyplot.xlabel("Path length")
+pyplot.bar([length + 0.2 for length in ft_stats.keys()], list(ft_stats.values()), width=0.4, label="Fat-tree")
+pyplot.bar([length - 0.2 for length in jl_stats.keys()], list(jl_stats.values()), width=0.4, label="Jellyfish")
+pyplot.legend()
+pyplot.savefig("lab2/figure_1c.pdf")
+

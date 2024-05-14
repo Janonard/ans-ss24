@@ -15,7 +15,7 @@
  """
 from random import sample, choice
 from itertools import cycle, chain
-
+from tqdm import tqdm
 
 class Edge:
     """
@@ -72,6 +72,22 @@ class Node:
             if edge.lnode == node or edge.rnode == node:
                 return True
         return False
+    
+    @property
+    def neighbors(self):
+        for edge in self.edges:
+            if edge.lnode is self:
+                yield edge.rnode
+            elif edge.rnode is self:
+                yield edge.lnode
+            else:
+                raise Exception("Illegal edge data")
+    
+    def __eq__(self, value: object) -> bool:
+        return self.label == value.label
+    
+    def __hash__(self) -> int:
+        return hash(self.label)
 
 
 class Topology(object):
@@ -130,6 +146,32 @@ class Topology(object):
                     queue.append(other_node)
                     missing_nodes.remove(other_node)
         assert (len(missing_nodes) == 0)
+
+    def single_source_shortest_paths(self, source):
+        """
+        Run breadth-first search to find the shortest paths to all (other) servers.
+        """
+        shortest_paths: dict[Node, tuple[int, list[Node]]] = {source: [source]}
+        queue: list[Node] = [source]
+
+        while len(queue) != 0:
+            current_node = queue.pop(0)
+            current_path = shortest_paths[current_node]
+
+            for neighbor in current_node.neighbors:
+                if neighbor not in shortest_paths:
+                    shortest_paths[neighbor] = current_path + [neighbor]
+                    queue.append(neighbor)
+
+        return shortest_paths
+    
+    def all_server_pairs_shortest_paths(self):
+        shortest_paths = dict()
+        for source_server in tqdm(self.servers):
+            source_server_shortest_paths = self.single_source_shortest_paths(source_server)
+            for dest_server in self.servers:
+                shortest_paths[(source_server, dest_server)] = source_server_shortest_paths[dest_server]
+        return shortest_paths
 
 
 class Jellyfish(Topology):
