@@ -16,6 +16,7 @@
 from random import sample, choice
 from itertools import cycle, chain
 from tqdm import tqdm
+import uuid
 
 
 class Edge:
@@ -41,8 +42,9 @@ class Node:
 
     def __init__(self, id, type):
         self.edges = []
-        self.id = id
-        self.type = type
+        self.__id__ = id
+        self.__type__ = type
+        self.__node_hash__ = hash(self.label)
 
     # Add an edge connected to another node
     def add_edge(self, node):
@@ -62,6 +64,14 @@ class Node:
         else:
             raise Exception("Node not part of this edge")
         self.edges.remove(edge)
+
+    @property
+    def id(self):
+        return self.__id__
+    
+    @property
+    def type(self):
+        return self.__type__
 
     @property
     def label(self):
@@ -88,7 +98,7 @@ class Node:
         return self.label == value.label
 
     def __hash__(self) -> int:
-        return hash(self.label)
+        return self.__node_hash__
 
     def __repr__(self) -> str:
         return f"Node {self.label}"
