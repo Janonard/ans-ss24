@@ -16,8 +16,9 @@
 
 import topo
 from tqdm import tqdm
-from itertools import product
+from itertools import product, chain
 from matplotlib import pyplot
+from random import shuffle, choice
 
 # Sanity check for corretness
 ft_topo = topo.Fattree(4)
@@ -46,43 +47,45 @@ num_switches = 245
 num_ports = 14
 
 if __name__ == "__main__":
-    # TODO: change to jellyfish
     jf_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
-    ft_topo = topo.Fattree(4)
-    paths = ft_topo.all_k_shortest_paths(8)
 
-    # Extract number of distinct paths per link
-    list_of_paths = [
-        item 
-        for sublist in paths.values() 
-        for item in sublist 
-        if len(item) > 1
-    ]
+    sources = list(range(len(jf_topo.servers)))
+    sinks = list(sources)
+    shuffle(sinks)
 
-    links = []
-    for path in list_of_paths:
-        links += [[str(path[i]), str(path[i+1])] for i in range(len(path) - 1)]
+    k_shortest_links = dict()
+    ecmp_8_links = dict()
+    ecmp_64_links = dict()
 
-    number_of_paths = {}
-    for link in links:
-        link = tuple(link)
-        if link in number_of_paths:
-            number_of_paths[link] += 1
-        else:
-            number_of_paths[link] = 1
+    for ((source, sink), paths) in jf_topo.all_k_shortest_paths(64, pairs=zip(sources, sinks)).items():
+        minimal_length = len(paths[0])
+        minimal_paths = [path for path in paths if len(path) == minimal_length]
+        ecmp_8_paths = minimal_paths[0:8]
+        ecmp_64_paths = minimal_paths[0:64]
 
-    sorted_number_of_paths = sorted(number_of_paths.values())
+        k_shortest_paths = paths[0:8]
+
+        for path_list, link_dict in [(ecmp_8_paths, ecmp_8_links), (ecmp_64_paths, ecmp_64_links), (k_shortest_paths, k_shortest_links)]:
+            link_set = set()
+            for path in path_list:
+                for i in range(1, len(path) - 2):
+                    link = (path[i], path[i+1])
+                    if link in link_set:
+                        continue
+                    link_set.add(link)
+                    if link not in link_dict:
+                        link_dict[link] = 1
+                    else:
+                        link_dict[link] += 1
 
     # Create the figure
     pyplot.figure()
-    pyplot.xlim((0, len(sorted_number_of_paths)))
-    #pyplot.ylim((0, 18))
-    #pyplot.yticks([i * 2 for i in range(0, 9)])
     pyplot.grid(True, linestyle="--")
     pyplot.ylabel("#Distinct Paths Link is on")
     pyplot.xlabel("Rank of Link")
-    pyplot.plot(list(range(0, len(sorted_number_of_paths))), 
-                sorted_number_of_paths, label="8 Shortest Paths")
+    pyplot.plot(sorted(k_shortest_links.values()), label="8 Shortest Paths")
+    pyplot.plot(sorted(ecmp_64_links.values()), label="64-way ECMP")
+    pyplot.plot(sorted(ecmp_8_links.values()), label="8-way ECMP")
     pyplot.legend()
-    pyplot.show()
     pyplot.savefig("lab2/figure_9.pdf")
+    pyplot.show()

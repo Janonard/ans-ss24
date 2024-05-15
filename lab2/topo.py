@@ -180,7 +180,7 @@ class Topology(object):
 
             for edge in current_node.edges:
                 neighbor = edge.lnode if edge.lnode is not current_node else edge.rnode
-                
+
                 if not neighbor.visited:
                     shortest_paths[neighbor] = current_path + [neighbor]
                     if neighbor is sink:
@@ -201,7 +201,8 @@ class Topology(object):
         return shortest_paths
 
     def k_shortest_paths(self, source, sink, k):
-        A: list[list[Node]] = [self.single_source_shortest_paths(source, sink)[sink]]
+        A: list[list[Node]] = [self.single_source_shortest_paths(source, sink)[
+            sink]]
         B: list[list[Node]] = []
 
         for k in range(1, k):
@@ -226,7 +227,8 @@ class Topology(object):
                         removed_edges.append((edge.lnode, edge.rnode))
                         root_path_node.remove_edge(edge)
 
-                shortest_paths = self.single_source_shortest_paths(spur_node, sink)
+                shortest_paths = self.single_source_shortest_paths(
+                    spur_node, sink)
                 if sink in shortest_paths:
                     B.append(root_path + shortest_paths[sink])
 
@@ -239,7 +241,7 @@ class Topology(object):
             A.append(B.pop(0))
 
         return A
-    
+
     def __all_k_shortest_paths_kernel__(self, pair):
         i_source, i_sink, k = pair
         source = self.servers[i_source]
@@ -253,25 +255,31 @@ class Topology(object):
             reverse_paths.append(reverse_path)
         return i_source, i_sink, forward_paths, reverse_paths
 
-    def all_k_shortest_paths(self, k, parallel=True):
+    def all_k_shortest_paths(self, k, pairs=None, parallel=True):
         paths = dict()
-        n_servers = len(self.servers)
-        n_pairs = n_servers * (n_servers + 1) / 2
 
-        def pairs():
-            for i_source in range(0, len(self.servers)):
-                for i_sink in range(i_source, len(self.servers)):
+        def create_input_feed():
+            if pairs is None:
+                for i_source in range(0, len(self.servers)):
+                    for i_sink in range(i_source, len(self.servers)):
+                        yield (i_source, i_sink, k)
+            else:
+                for (i_source, i_sink) in pairs:
                     yield (i_source, i_sink, k)
-        pairs = tqdm(pairs(), total=n_pairs)
+        input_feed = tqdm(list(create_input_feed()))
 
         with Pool() as pool:
             if parallel:
-                paths_from_source = pool.imap_unordered(self.__all_k_shortest_paths_kernel__, pairs, 16)
+                paths_from_source = pool.imap_unordered(
+                    self.__all_k_shortest_paths_kernel__, input_feed, 16)
             else:
-                paths_from_source = map(self.__all_k_shortest_paths_kernel__, pairs)
+                paths_from_source = map(
+                    self.__all_k_shortest_paths_kernel__, input_feed)
             for i_source, i_sink, forward_paths, reverse_paths in paths_from_source:
-                paths[(self.servers[i_source], self.servers[i_sink])] = forward_paths
-                paths[(self.servers[i_sink], self.servers[i_source])] = reverse_paths
+                paths[(self.servers[i_source], self.servers[i_sink])
+                      ] = forward_paths
+                paths[(self.servers[i_sink], self.servers[i_source])
+                      ] = reverse_paths
         return paths
 
 
@@ -286,7 +294,8 @@ class Jellyfish(Topology):
 
     def generate(self, num_servers, num_switches, num_ports):
         assert num_ports > num_servers / num_switches, \
-            f"{num_ports} ports are not enough support {num_servers} servers with {num_switches} switches"
+            f"{num_ports} ports are not enough support {
+                num_servers} servers with {num_switches} switches"
 
         self.servers = [Node(i_server, "h")
                         for i_server in range(0, num_servers)]
