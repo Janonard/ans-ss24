@@ -22,6 +22,7 @@ num_servers = 686
 num_switches = 245
 num_ports = 14
 
+
 def make_connectivity_stats(topo):
     paths = topo.all_server_pairs_shortest_paths()
     stats = dict()
@@ -34,6 +35,7 @@ def make_connectivity_stats(topo):
     del stats[0]
     n_pairs = sum(stats.values())
     return {length: count / n_pairs for (length, count) in stats.items()}
+
 
 print("Computing the stats for the fat tree...")
 ft_topo = topo.Fattree(14)
@@ -51,7 +53,8 @@ for i in range(0, 10):
             mean_jl_stats[length] = [count]
         else:
             mean_jl_stats[length].append(count)
-jl_stats = {length: sum(count) / len(count) for (length, count) in mean_jl_stats.items()}
+jl_stats = {length: sum(count) / len(count)
+            for (length, count) in mean_jl_stats.items()}
 print("Done!")
 
 pyplot.figure()
@@ -60,8 +63,9 @@ pyplot.yticks([i / 10.0 for i in range(0, 11)])
 pyplot.grid(True, linestyle="--")
 pyplot.ylabel("Fraction of Server Pairs")
 pyplot.xlabel("Path length")
-pyplot.bar([length + 0.2 for length in ft_stats.keys()], list(ft_stats.values()), width=0.4, label="Fat-tree")
-pyplot.bar([length - 0.2 for length in jl_stats.keys()], list(jl_stats.values()), width=0.4, label="Jellyfish")
+pyplot.bar([length + 0.2 for length in ft_stats.keys()],
+           list(ft_stats.values()), width=0.4, label="Fat-tree")
+pyplot.bar([length - 0.2 for length in jl_stats.keys()],
+           list(jl_stats.values()), width=0.4, label="Jellyfish")
 pyplot.legend()
 pyplot.savefig("lab2/figure_1c.pdf")
-

@@ -15,6 +15,8 @@
  """
 
 import topo
+from tqdm import tqdm
+from itertools import product
 
 # Setup for Jellyfish
 num_servers = 686
@@ -23,4 +25,7 @@ num_ports = 14
 
 jf_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
 
-# TODO: code for reproducing Figure 9 in the jellyfish paper
+ft_topo = topo.Fattree(14)
+
+for (source, sink) in tqdm(list(product(ft_topo.servers, ft_topo.servers))):
+    k_shortest_paths = ft_topo.k_shortest_paths(source, sink, 8)

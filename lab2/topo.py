@@ -17,6 +17,7 @@ from random import sample, choice
 from itertools import cycle, chain
 from tqdm import tqdm
 
+
 class Edge:
     """
     Class for an edge in the graph
@@ -72,7 +73,7 @@ class Node:
             if edge.lnode == node or edge.rnode == node:
                 return True
         return False
-    
+
     @property
     def neighbors(self):
         for edge in self.edges:
@@ -82,12 +83,15 @@ class Node:
                 yield edge.lnode
             else:
                 raise Exception("Illegal edge data")
-    
+
     def __eq__(self, value: object) -> bool:
         return self.label == value.label
-    
+
     def __hash__(self) -> int:
         return hash(self.label)
+
+    def __repr__(self) -> str:
+        return f"Node {self.label}"
 
 
 class Topology(object):
@@ -164,14 +168,56 @@ class Topology(object):
                     queue.append(neighbor)
 
         return shortest_paths
-    
+
     def all_server_pairs_shortest_paths(self):
         shortest_paths = dict()
         for source_server in tqdm(self.servers):
-            source_server_shortest_paths = self.single_source_shortest_paths(source_server)
+            source_server_shortest_paths = self.single_source_shortest_paths(
+                source_server)
             for dest_server in self.servers:
-                shortest_paths[(source_server, dest_server)] = source_server_shortest_paths[dest_server]
+                shortest_paths[(source_server, dest_server)
+                               ] = source_server_shortest_paths[dest_server]
         return shortest_paths
+
+    def k_shortest_paths(self, source, sink, k):
+        A: list[list[Node]] = [self.single_source_shortest_paths(source)[sink]]
+        B: list[list[Node]] = []
+
+        for k in range(1, k):
+            for i in range(0, len(A[k-1]) - 2):
+                spur_node = A[k-1][i]
+                root_path = A[k-1][0:i]
+
+                removed_edges: list[tuple[Node, Node]] = []
+
+                for p in A:
+                    if p[0:i] == root_path and p[i] == spur_node:
+                        next_node_in_p = p[i+1]
+                        removed_edges.append((spur_node, next_node_in_p))
+                        for edge in spur_node.edges:
+                            if next_node_in_p in [edge.lnode, edge.rnode]:
+                                spur_node.remove_edge(edge)
+                                break
+
+                for root_path_node in root_path:
+                    # Removing all edges towards a node is as good as removing it from the graph.
+                    for edge in root_path_node.edges:
+                        removed_edges.append((edge.lnode, edge.rnode))
+                        root_path_node.remove_edge(edge)
+
+                shortest_paths = self.single_source_shortest_paths(spur_node)
+                if sink in shortest_paths:
+                    B.append(root_path + shortest_paths[sink])
+
+                for (lnode, rnode) in removed_edges:
+                    lnode.add_edge(rnode)
+
+            if len(B) == 0:
+                break
+            B.sort(key=lambda path: len(path))
+            A.append(B.pop(0))
+
+        return A
 
 
 class Jellyfish(Topology):
@@ -250,7 +296,7 @@ class Fattree(Topology):
     def generate(self, num_ports):
 
         num_ports_half = int(num_ports / 2)
-        
+
         # Create core switches
         self.switches = [Node(i, "s") for i in range(0, num_ports_half ** 2)]
 
@@ -260,26 +306,25 @@ class Fattree(Topology):
             for i in range(0, num_ports_half):
                 # Create (k/2) edge switches
                 self.switches.append(Node(len(self.switches), "s"))
-                
+
                 for j in range(0, num_ports_half):
                     # Add (k/2) servers per edge switch
                     self.servers.append(Node(len(self.servers), "h"))
 
                     # Add edge: edge - server
                     self.switches[-1].add_edge(self.servers[-1])
-            
+
             for i in range(0, num_ports_half):
                 # Create (k/2) aggregation switches
                 self.switches.append(Node(len(self.switches), "s"))
 
-                # Add edges (cartesian product): edge - aggregation 
-                for edge_switch in self.switches[-num_ports_half - 1 - i : -1 - i]:
+                # Add edges (cartesian product): edge - aggregation
+                for edge_switch in self.switches[-num_ports_half - 1 - i: -1 - i]:
                     edge_switch.add_edge(self.switches[-1])
 
                 # Add edges: core - aggregation
-                for core_switch in self.switches[i * num_ports_half : (i + 1) * num_ports_half]:
+                for core_switch in self.switches[i * num_ports_half: (i + 1) * num_ports_half]:
                     core_switch.add_edge(self.switches[-1])
-
 
 
 if __name__ == "__main__":
