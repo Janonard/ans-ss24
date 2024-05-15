@@ -46,5 +46,6 @@ num_ports = 14
 
 #jf_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
 if __name__ == '__main__':
-    ft_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
-    ft_topo.all_k_shortest_paths(64)
+    #ft_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
+    ft_topo = topo.Fattree(8)
+    ft_topo.all_k_shortest_paths(8, parallel=False)

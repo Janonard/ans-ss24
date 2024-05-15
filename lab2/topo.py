@@ -251,9 +251,9 @@ class Topology(object):
             reverse_path = list(p)
             reverse_path.reverse()
             reverse_paths.append(reverse_path)
-        return i_sink, forward_paths, reverse_paths
+        return i_source, i_sink, forward_paths, reverse_paths
 
-    def all_k_shortest_paths(self, k):
+    def all_k_shortest_paths(self, k, parallel=True):
         paths = dict()
         n_servers = len(self.servers)
         n_pairs = n_servers * (n_servers + 1) / 2
@@ -262,16 +262,16 @@ class Topology(object):
             for i_source in range(0, len(self.servers)):
                 for i_sink in range(i_source, len(self.servers)):
                     yield (i_source, i_sink, k)
+        pairs = tqdm(pairs(), total=n_pairs)
 
         with Pool() as pool:
-            for i_source in tqdm(range(0, len(self.servers))):
-                paths_from_source = pool.imap_unordered(
-                    self.__all_k_shortest_paths_kernel__,
-                    tqdm(pairs(), total=n_pairs),
-                    16)
-                for i_sink, forward_paths, reverse_paths in paths_from_source:
-                    paths[(self.servers[i_source], self.servers[i_sink])] = forward_paths
-                    paths[(self.servers[i_sink], self.servers[i_source])] = reverse_paths
+            if parallel:
+                paths_from_source = pool.imap_unordered(self.__all_k_shortest_paths_kernel__, pairs, 16)
+            else:
+                paths_from_source = map(self.__all_k_shortest_paths_kernel__, pairs)
+            for i_source, i_sink, forward_paths, reverse_paths in paths_from_source:
+                paths[(self.servers[i_source], self.servers[i_sink])] = forward_paths
+                paths[(self.servers[i_sink], self.servers[i_source])] = reverse_paths
         return paths
 
 
