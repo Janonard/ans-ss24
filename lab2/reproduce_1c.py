@@ -32,7 +32,7 @@ def make_connectivity_stats(topo):
             stats[length] = 1
         else:
             stats[length] += 1
-    del stats[0]
+    
     n_pairs = sum(stats.values())
     return {length: count / n_pairs for (length, count) in stats.items()}
 
