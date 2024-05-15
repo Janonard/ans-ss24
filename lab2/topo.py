@@ -43,6 +43,7 @@ class Node:
 
     def __init__(self, id, type):
         self.edges = []
+        self.visited = False
         self.__id__ = id
         self.__type__ = type
         self.__node_hash__ = hash(self.label)
@@ -169,6 +170,9 @@ class Topology(object):
         shortest_paths: dict[Node, tuple[int, list[Node]]] = {source: [source]}
         queue: list[Node] = [source]
 
+        for node in chain(self.servers, self.switches):
+            node.visited = False
+
         while len(queue) != 0:
             current_node = queue.pop(0)
             current_path = shortest_paths[current_node]
@@ -176,10 +180,11 @@ class Topology(object):
             for edge in current_node.edges:
                 neighbor = edge.lnode if edge.lnode is not current_node else edge.rnode
                 
-                if neighbor not in shortest_paths:
+                if not neighbor.visited:
                     shortest_paths[neighbor] = current_path + [neighbor]
                     if neighbor is sink:
                         return shortest_paths
+                    neighbor.visited = True
                     queue.append(neighbor)
 
         return shortest_paths
