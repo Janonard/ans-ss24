@@ -162,7 +162,7 @@ class Topology(object):
                     missing_nodes.remove(other_node)
         assert (len(missing_nodes) == 0)
 
-    def single_source_shortest_paths(self, source):
+    def single_source_shortest_paths(self, source, sink=None):
         """
         Run breadth-first search to find the shortest paths to all (other) servers.
         """
@@ -176,6 +176,8 @@ class Topology(object):
             for neighbor in current_node.neighbors:
                 if neighbor not in shortest_paths:
                     shortest_paths[neighbor] = current_path + [neighbor]
+                    if neighbor is sink:
+                        return shortest_paths
                     queue.append(neighbor)
 
         return shortest_paths
@@ -191,7 +193,7 @@ class Topology(object):
         return shortest_paths
 
     def k_shortest_paths(self, source, sink, k):
-        A: list[list[Node]] = [self.single_source_shortest_paths(source)[sink]]
+        A: list[list[Node]] = [self.single_source_shortest_paths(source, sink)[sink]]
         B: list[list[Node]] = []
 
         for k in range(1, k):
@@ -216,7 +218,7 @@ class Topology(object):
                         removed_edges.append((edge.lnode, edge.rnode))
                         root_path_node.remove_edge(edge)
 
-                shortest_paths = self.single_source_shortest_paths(spur_node)
+                shortest_paths = self.single_source_shortest_paths(spur_node, sink)
                 if sink in shortest_paths:
                     B.append(root_path + shortest_paths[sink])
 
