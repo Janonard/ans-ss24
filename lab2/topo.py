@@ -231,7 +231,23 @@ class Topology(object):
         return A
 
     def all_k_shortest_paths(self, k):
-        return {(source, sink): self.k_shortest_paths(source, sink, k) for (source, sink) in tqdm(list(product(self.servers, self.servers)))}
+        paths = dict()
+        n_servers = len(self.servers)
+        n_pairs = n_servers * (n_servers + 1) / 2
+        with tqdm(total=n_pairs) as pbar:
+            for i_source in range(0, len(self.servers)):
+                source = self.servers[i_source]
+                for i_sink in range(i_source, len(self.servers)):
+                    sink = self.servers[i_sink]
+
+                    paths[(source, sink)] = self.k_shortest_paths(source, sink, k)
+                    paths[(sink, source)] = []
+                    for p in paths[(source, sink)]:
+                        reverse_path = list(p)
+                        reverse_path.reverse()
+                        paths[((sink, source))].append(reverse_path)
+                    pbar.update(1)
+        return paths
 
 
 class Jellyfish(Topology):
