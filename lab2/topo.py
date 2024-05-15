@@ -18,6 +18,7 @@ from itertools import cycle, chain
 from tqdm import tqdm
 from itertools import product
 import uuid
+from multiprocessing import Pool
 
 
 class Edge:
@@ -43,6 +44,7 @@ class Node:
 
     def __init__(self, id, type):
         self.edges = []
+        self.visited = False
         self.__id__ = id
         self.__type__ = type
         self.__node_hash__ = hash(self.label)
@@ -162,20 +164,28 @@ class Topology(object):
                     missing_nodes.remove(other_node)
         assert (len(missing_nodes) == 0)
 
-    def single_source_shortest_paths(self, source):
+    def single_source_shortest_paths(self, source, sink=None):
         """
         Run breadth-first search to find the shortest paths to all (other) servers.
         """
         shortest_paths: dict[Node, tuple[int, list[Node]]] = {source: [source]}
         queue: list[Node] = [source]
 
+        for node in chain(self.servers, self.switches):
+            node.visited = False
+
         while len(queue) != 0:
             current_node = queue.pop(0)
             current_path = shortest_paths[current_node]
 
-            for neighbor in current_node.neighbors:
-                if neighbor not in shortest_paths:
+            for edge in current_node.edges:
+                neighbor = edge.lnode if edge.lnode is not current_node else edge.rnode
+                
+                if not neighbor.visited:
                     shortest_paths[neighbor] = current_path + [neighbor]
+                    if neighbor is sink:
+                        return shortest_paths
+                    neighbor.visited = True
                     queue.append(neighbor)
 
         return shortest_paths
@@ -191,7 +201,7 @@ class Topology(object):
         return shortest_paths
 
     def k_shortest_paths(self, source, sink, k):
-        A: list[list[Node]] = [self.single_source_shortest_paths(source)[sink]]
+        A: list[list[Node]] = [self.single_source_shortest_paths(source, sink)[sink]]
         B: list[list[Node]] = []
 
         for k in range(1, k):
@@ -216,7 +226,7 @@ class Topology(object):
                         removed_edges.append((edge.lnode, edge.rnode))
                         root_path_node.remove_edge(edge)
 
-                shortest_paths = self.single_source_shortest_paths(spur_node)
+                shortest_paths = self.single_source_shortest_paths(spur_node, sink)
                 if sink in shortest_paths:
                     B.append(root_path + shortest_paths[sink])
 
@@ -229,9 +239,40 @@ class Topology(object):
             A.append(B.pop(0))
 
         return A
+    
+    def __all_k_shortest_paths_kernel__(self, pair):
+        i_source, i_sink, k = pair
+        source = self.servers[i_source]
+        sink = self.servers[i_sink]
 
-    def all_k_shortest_paths(self, k):
-        return {(source, sink): self.k_shortest_paths(source, sink, k) for (source, sink) in tqdm(list(product(self.servers, self.servers)))}
+        forward_paths = self.k_shortest_paths(source, sink, k)
+        reverse_paths = []
+        for p in forward_paths:
+            reverse_path = list(p)
+            reverse_path.reverse()
+            reverse_paths.append(reverse_path)
+        return i_source, i_sink, forward_paths, reverse_paths
+
+    def all_k_shortest_paths(self, k, parallel=True):
+        paths = dict()
+        n_servers = len(self.servers)
+        n_pairs = n_servers * (n_servers + 1) / 2
+
+        def pairs():
+            for i_source in range(0, len(self.servers)):
+                for i_sink in range(i_source, len(self.servers)):
+                    yield (i_source, i_sink, k)
+        pairs = tqdm(pairs(), total=n_pairs)
+
+        with Pool() as pool:
+            if parallel:
+                paths_from_source = pool.imap_unordered(self.__all_k_shortest_paths_kernel__, pairs, 16)
+            else:
+                paths_from_source = map(self.__all_k_shortest_paths_kernel__, pairs)
+            for i_source, i_sink, forward_paths, reverse_paths in paths_from_source:
+                paths[(self.servers[i_source], self.servers[i_sink])] = forward_paths
+                paths[(self.servers[i_sink], self.servers[i_source])] = reverse_paths
+        return paths
 
 
 class Jellyfish(Topology):

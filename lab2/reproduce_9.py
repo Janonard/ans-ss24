@@ -45,43 +45,44 @@ num_servers = 686
 num_switches = 245
 num_ports = 14
 
-# TODO: change to jellyfish
-jf_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
-ft_topo = topo.Fattree(4)
-paths = ft_topo.all_k_shortest_paths(8)
+if __name__ == "__main__":
+    # TODO: change to jellyfish
+    jf_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
+    ft_topo = topo.Fattree(4)
+    paths = ft_topo.all_k_shortest_paths(8)
 
-# Extract number of distinct paths per link
-list_of_paths = [
-    item 
-    for sublist in paths.values() 
-    for item in sublist 
-    if len(item) > 1
-]
+    # Extract number of distinct paths per link
+    list_of_paths = [
+        item 
+        for sublist in paths.values() 
+        for item in sublist 
+        if len(item) > 1
+    ]
 
-links = []
-for path in list_of_paths:
-    links += [[str(path[i]), str(path[i+1])] for i in range(len(path) - 1)]
+    links = []
+    for path in list_of_paths:
+        links += [[str(path[i]), str(path[i+1])] for i in range(len(path) - 1)]
 
-number_of_paths = {}
-for link in links:
-    link = tuple(link)
-    if link in number_of_paths:
-        number_of_paths[link] += 1
-    else:
-        number_of_paths[link] = 1
+    number_of_paths = {}
+    for link in links:
+        link = tuple(link)
+        if link in number_of_paths:
+            number_of_paths[link] += 1
+        else:
+            number_of_paths[link] = 1
 
-sorted_number_of_paths = sorted(number_of_paths.values())
+    sorted_number_of_paths = sorted(number_of_paths.values())
 
-# Create the figure
-pyplot.figure()
-pyplot.xlim((0, len(sorted_number_of_paths)))
-#pyplot.ylim((0, 18))
-#pyplot.yticks([i * 2 for i in range(0, 9)])
-pyplot.grid(True, linestyle="--")
-pyplot.ylabel("#Distinct Paths Link is on")
-pyplot.xlabel("Rank of Link")
-pyplot.plot(list(range(0, len(sorted_number_of_paths))), 
-            sorted_number_of_paths, label="8 Shortest Paths")
-pyplot.legend()
-pyplot.show()
-pyplot.savefig("lab2/figure_9.pdf")
+    # Create the figure
+    pyplot.figure()
+    pyplot.xlim((0, len(sorted_number_of_paths)))
+    #pyplot.ylim((0, 18))
+    #pyplot.yticks([i * 2 for i in range(0, 9)])
+    pyplot.grid(True, linestyle="--")
+    pyplot.ylabel("#Distinct Paths Link is on")
+    pyplot.xlabel("Rank of Link")
+    pyplot.plot(list(range(0, len(sorted_number_of_paths))), 
+                sorted_number_of_paths, label="8 Shortest Paths")
+    pyplot.legend()
+    pyplot.show()
+    pyplot.savefig("lab2/figure_9.pdf")
