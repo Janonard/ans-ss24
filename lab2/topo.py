@@ -95,7 +95,7 @@ class Node:
                 raise Exception("Illegal edge data")
 
     def __eq__(self, value: object) -> bool:
-        return self.label == value.label
+        return self.__node_hash__ == value.__node_hash__
 
     def __hash__(self) -> int:
         return self.__node_hash__
