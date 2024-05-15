@@ -16,6 +16,7 @@
 from random import sample, choice
 from itertools import cycle, chain
 from tqdm import tqdm
+from itertools import product
 import uuid
 
 
@@ -68,7 +69,7 @@ class Node:
     @property
     def id(self):
         return self.__id__
-    
+
     @property
     def type(self):
         return self.__type__
@@ -228,6 +229,9 @@ class Topology(object):
             A.append(B.pop(0))
 
         return A
+
+    def all_k_shortest_paths(self, k):
+        return {(source, sink): self.k_shortest_paths(source, sink, k) for (source, sink) in tqdm(list(product(self.servers, self.servers)))}
 
 
 class Jellyfish(Topology):

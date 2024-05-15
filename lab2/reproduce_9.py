@@ -46,7 +46,5 @@ num_ports = 14
 
 jf_topo = topo.Jellyfish(num_servers, num_switches, num_ports)
 
-ft_topo = topo.Fattree(4)
-
-for (source, sink) in tqdm(list(product(ft_topo.servers, ft_topo.servers))):
-    k_shortest_paths = ft_topo.k_shortest_paths(source, sink, 8)
+ft_topo = topo.Fattree(6)
+ft_topo.all_k_shortest_paths(8)
