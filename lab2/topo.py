@@ -18,6 +18,7 @@ from itertools import cycle, chain
 from tqdm import tqdm
 from itertools import product
 import uuid
+from multiprocessing import Pool
 
 
 class Edge:
@@ -238,24 +239,39 @@ class Topology(object):
             A.append(B.pop(0))
 
         return A
+    
+    def __all_k_shortest_paths_kernel__(self, pair):
+        i_source, i_sink, k = pair
+        source = self.servers[i_source]
+        sink = self.servers[i_sink]
+
+        forward_paths = self.k_shortest_paths(source, sink, k)
+        reverse_paths = []
+        for p in forward_paths:
+            reverse_path = list(p)
+            reverse_path.reverse()
+            reverse_paths.append(reverse_path)
+        return i_sink, forward_paths, reverse_paths
 
     def all_k_shortest_paths(self, k):
         paths = dict()
         n_servers = len(self.servers)
         n_pairs = n_servers * (n_servers + 1) / 2
-        with tqdm(total=n_pairs) as pbar:
-            for i_source in range(0, len(self.servers)):
-                source = self.servers[i_source]
-                for i_sink in range(i_source, len(self.servers)):
-                    sink = self.servers[i_sink]
 
-                    paths[(source, sink)] = self.k_shortest_paths(source, sink, k)
-                    paths[(sink, source)] = []
-                    for p in paths[(source, sink)]:
-                        reverse_path = list(p)
-                        reverse_path.reverse()
-                        paths[((sink, source))].append(reverse_path)
-                    pbar.update(1)
+        def pairs():
+            for i_source in range(0, len(self.servers)):
+                for i_sink in range(i_source, len(self.servers)):
+                    yield (i_source, i_sink, k)
+
+        with Pool() as pool:
+            for i_source in tqdm(range(0, len(self.servers))):
+                paths_from_source = pool.imap_unordered(
+                    self.__all_k_shortest_paths_kernel__,
+                    tqdm(pairs(), total=n_pairs),
+                    16)
+                for i_sink, forward_paths, reverse_paths in paths_from_source:
+                    paths[(self.servers[i_source], self.servers[i_sink])] = forward_paths
+                    paths[(self.servers[i_sink], self.servers[i_source])] = reverse_paths
         return paths
 
 
