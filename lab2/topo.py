@@ -173,7 +173,9 @@ class Topology(object):
             current_node = queue.pop(0)
             current_path = shortest_paths[current_node]
 
-            for neighbor in current_node.neighbors:
+            for edge in current_node.edges:
+                neighbor = edge.lnode if edge.lnode is not current_node else edge.rnode
+                
                 if neighbor not in shortest_paths:
                     shortest_paths[neighbor] = current_path + [neighbor]
                     if neighbor is sink:
