@@ -18,6 +18,27 @@ import topo
 from tqdm import tqdm
 from itertools import product
 
+# Sanity check for corretness
+ft_topo = topo.Fattree(4)
+source = ft_topo.servers[0]
+sink = ft_topo.servers[-1]
+paths = ft_topo.k_shortest_paths(source, sink, 8)
+assert len(paths) == 8
+assert len(paths[0]) == 7
+assert len(paths[1]) == 7
+assert len(paths[2]) == 7
+assert len(paths[3]) == 7
+assert len(paths[4]) == 9
+assert len(paths[5]) == 9
+assert len(paths[6]) == 9
+assert len(paths[7]) == 9
+
+for p in paths:
+    assert p[0] == source and p[-1] == sink
+    for i in range(1, len(p)):
+        assert p[i-1] in p[i].neighbors
+
+
 # Setup for Jellyfish
 num_servers = 686
 num_switches = 245
