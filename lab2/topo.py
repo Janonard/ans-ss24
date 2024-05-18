@@ -294,8 +294,7 @@ class Jellyfish(Topology):
 
     def generate(self, num_servers, num_switches, num_ports):
         assert num_ports > num_servers / num_switches, \
-            f"{num_ports} ports are not enough support {
-                num_servers} servers with {num_switches} switches"
+            f"{num_ports} ports are not enough support {num_servers} servers with {num_switches} switches"
 
         self.servers = [Node(i_server, "h")
                         for i_server in range(0, num_servers)]
