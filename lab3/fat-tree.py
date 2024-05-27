@@ -41,7 +41,12 @@ class FattreeNet(Topo):
 		
 		Topo.__init__(self)
 
-		# TODO: please complete the network generation logic here
+		nodes = dict()
+		for device in (ft_topo.switches + ft_topo.servers):
+			nodes[device.type + device.id] = self.addHost(device.id, ip=device.ip)
+		
+		for edge in ft_topo.edges:
+			self.addLink(nodes[edge.lnode.type + edge.lnode.id], nodes[edge.rnode.type + edge.rnode.id], bw=15, delay='5ms')
 
 
 def make_mininet_instance(graph_topo):
