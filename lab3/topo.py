@@ -20,6 +20,7 @@ from itertools import product
 import uuid
 from multiprocessing import Pool
 
+# TODO: remove unnecessary parts
 
 class Edge:
     """

@@ -41,10 +41,12 @@ class FattreeNet(Topo):
 		
 		Topo.__init__(self)
 
+		# Create a node for each switch/server
 		nodes = dict()
 		for device in (ft_topo.switches + ft_topo.servers):
 			nodes[device.type + device.id] = self.addHost(device.id, ip=device.ip)
 		
+		# Create a link for each edge
 		for edge in ft_topo.edges:
 			self.addLink(nodes[edge.lnode.type + edge.lnode.id], nodes[edge.rnode.type + edge.rnode.id], bw=15, delay='5ms')
 
