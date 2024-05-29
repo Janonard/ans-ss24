@@ -39,12 +39,15 @@ class SPRouter(app_manager.RyuApp):
         super(SPRouter, self).__init__(*args, **kwargs)
 
         self.topo = nx.DiGraph()
-
+        self.hosts = list()
 
     # Topology discovery
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev: event.EventSwitchEnter):
         self.topo = nx.DiGraph()
+        for switch in get_switch(self, None):
+            self.topo.add_node(switch.dp.id, dp=switch.dp)
+
         for link in get_link(self, None):
             self.topo.add_edge(link.src.dpid, link.dst.dpid, out_port=link.src.port_no)
             self.topo.add_edge(link.dst.dpid, link.src.dpid, out_port=link.dst.port_no)
@@ -76,6 +79,8 @@ class SPRouter(app_manager.RyuApp):
                                 match=match, instructions=inst)
         datapath.send_msg(mod)
 
+    def get_occupied_ports(self, node):
+        return [out_port for (_, _, out_port) in self.topo.out_edges(node, data="out_port")]
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -85,16 +90,66 @@ class SPRouter(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        # TODO: handle new packets at the controller
-        empty_ports = set(range(1, 5)).difference({out_port for (_, _, out_port) in self.topo.out_edges(dpid, data="out_port")})
-
         in_port = msg.match["in_port"]
         pkt = packet.Packet(msg.data)
         eth_pkt: ethernet.ethernet = pkt.get_protocol(ethernet.ethernet)
-        
-        if in_port in empty_ports:
-            src_address = eth_pkt.src.replace(":", "")
-            self.topo.add_node(src_address)
-            self.topo.add_edge(src_address, datapath.id)
-            self.topo.add_edge(datapath.id, src_address, out_port=in_port)
+        src_name = eth_pkt.src.replace(":", "")
+        dst_name = eth_pkt.dst.replace(":", "")
+
+        occupied_ports = [out_port for (_, _, out_port) in self.topo.out_edges(dpid, data="out_port")]
+        if in_port not in occupied_ports:
+            # The packet comes from a host that we don't know yet. Add it to the topology.
+            self.topo.add_edge(src_name, datapath.id)
+            self.topo.add_edge(datapath.id, src_name, out_port=in_port)
+            self.hosts.append(src_name)
             nx.nx_pydot.write_dot(self.topo, "topo.dot")
+
+        if eth_pkt.dst == "ff:ff:ff:ff:ff:ff":
+            # Broadcast the packet manually to all hosts
+            for host in self.hosts:
+                if host == src_name:
+                    continue
+
+                dpid, _, out_port = list(self.topo.in_edges(host, data="out_port"))[0]
+                dp = self.topo.nodes[dpid]["dp"]
+
+                dp.send_msg(
+                    parser.OFPPacketOut(
+                        datapath=dp, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
+                        actions=[parser.OFPActionOutput(out_port)],
+                        data=msg.data
+                    )
+                )
+
+        else:
+            # Ignore unkown targets
+            if dst_name not in self.topo.nodes:
+                return
+            
+            # Get the shortest path and set up flow rules for switches along the path
+            path = nx.shortest_paths.shortest_path(self.topo, dpid, dst_name)
+            for i in range(0, len(path)-1):
+                out_dp = self.topo.nodes[path[i]]["dp"]
+                out_port = self.topo[path[i]][path[i+1]]["out_port"]
+                self.add_flow(
+                    out_dp,
+                    1,
+                    parser.OFPMatch(eth_src=eth_pkt.src, eth_dst=eth_pkt.dst),
+                    [parser.OFPActionOutput(out_port)]
+                )
+            
+            # Logging
+            if src_name in self.hosts and dst_name in self.hosts:
+                print(f"{src_name} -> {path[:-1]} -> {dst_name}")
+            
+            # Forward the packet via the last switch on the shortest path
+            # (No need to send it via the whole path)
+            dp = self.topo.nodes[path[-2]]["dp"]
+            out_port = self.topo[path[-2]][path[-1]]["out_port"]
+            dp.send_msg(
+                parser.OFPPacketOut(
+                    datapath=dp, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
+                    actions=[parser.OFPActionOutput(out_port)],
+                    data=msg.data
+                )
+            )
