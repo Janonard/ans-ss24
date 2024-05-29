@@ -17,21 +17,19 @@
 #!/usr/bin/env python3
 
 from ryu.base import app_manager
-from ryu.controller import mac_to_port
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.mac import haddr_to_bin
-from ryu.lib.packet import packet
-from ryu.lib.packet import ipv4
-from ryu.lib.packet import arp
+from ryu.lib.packet import *
 
 from ryu.topology import event, switches
+from ryu.topology.switches import Switch, Link, Port
 from ryu.topology.api import get_switch, get_link
+from ryu.controller.controller import Datapath
 from ryu.app.wsgi import ControllerBase
 
-import topo
+import networkx as nx
 
 class SPRouter(app_manager.RyuApp):
 
@@ -39,16 +37,19 @@ class SPRouter(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(SPRouter, self).__init__(*args, **kwargs)
-        self.topo_net = topo.Fattree(4)
+
+        self.topo = nx.DiGraph()
 
 
     # Topology discovery
     @set_ev_cls(event.EventSwitchEnter)
-    def get_topology_data(self, ev):
+    def get_topology_data(self, ev: event.EventSwitchEnter):
+        self.topo = nx.DiGraph()
+        for link in get_link(self, None):
+            self.topo.add_edge(link.src.dpid, link.dst.dpid, out_port=link.src.port_no)
+            self.topo.add_edge(link.dst.dpid, link.src.dpid, out_port=link.dst.port_no)
 
-        # Switches and links in the network
-        switches = get_switch(self, None)
-        links = get_link(self, None)
+        nx.nx_pydot.write_dot(self.topo, "topo.dot")
 
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -85,3 +86,15 @@ class SPRouter(app_manager.RyuApp):
         parser = datapath.ofproto_parser
 
         # TODO: handle new packets at the controller
+        empty_ports = set(range(1, 5)).difference({out_port for (_, _, out_port) in self.topo.out_edges(dpid, data="out_port")})
+
+        in_port = msg.match["in_port"]
+        pkt = packet.Packet(msg.data)
+        eth_pkt: ethernet.ethernet = pkt.get_protocol(ethernet.ethernet)
+        
+        if in_port in empty_ports:
+            src_address = eth_pkt.src.replace(":", "")
+            self.topo.add_node(src_address)
+            self.topo.add_edge(src_address, datapath.id)
+            self.topo.add_edge(datapath.id, src_address, out_port=in_port)
+            nx.nx_pydot.write_dot(self.topo, "topo.dot")
