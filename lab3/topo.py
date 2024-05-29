@@ -84,7 +84,7 @@ class Node:
 
     @property
     def label(self):
-        return f"{self.type}{self.id}({self.ip})"
+        return f"{self.type}{self.id}"
 
     # Decide if another node is a neighbor
     def is_neighbor(self, node):
