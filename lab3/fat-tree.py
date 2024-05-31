@@ -44,7 +44,7 @@ class FattreeNet(Topo):
 		# Create a node for each switch/server
 		nodes = dict()
 		for device in ft_topo.switches:
-			nodes[device.label] = self.addSwitch(device.label, dpid=str(device.numeric_ip))
+			nodes[device.label] = self.addSwitch(device.label, dpid=hex(device.numeric_ip)[2:])
 		for device in ft_topo.servers:
 			nodes[device.label] = self.addHost(device.label, ip=device.ip)
 		
