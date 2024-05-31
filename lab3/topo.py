@@ -23,6 +23,7 @@ from ipaddress import IPv4Address
 
 # TODO: remove unnecessary parts
 
+
 class Edge:
     """
     Class for an edge in the graph
@@ -30,13 +31,20 @@ class Edge:
 
     def __init__(self):
         self.lnode = None
+        self.lport = None
+
         self.rnode = None
+        self.rport = None
 
     def remove(self):
         self.lnode.edges.remove(self)
         self.rnode.edges.remove(self)
+
         self.lnode = None
+        self.lport = None
+
         self.rnode = None
+        self.rport = None
 
 
 class Node:
@@ -51,6 +59,7 @@ class Node:
         self.__type__ = type
         self.__ip__ = ip
         self.__node_hash__ = hash(self.label)
+        self.__datapath__ = None
 
     # Add an edge connected to another node
     def add_edge(self, node):
@@ -78,14 +87,18 @@ class Node:
     @property
     def type(self):
         return self.__type__
-    
+
     @property
     def ip(self):
         return self.__ip__
-    
+
     @property
-    def numeric_ip(self):
-        return int(IPv4Address(self.__ip__.split("/")[0]))
+    def datapath(self):
+        return self.__datapath__
+
+    @datapath.setter
+    def datapath(self, datapath):
+        self.__datapath__ = datapath
 
     @property
     def label(self):
@@ -132,13 +145,19 @@ class Topology(object):
         edge_lines = []
         added_edges = set()
         for node in chain(self.servers, self.switches):
-            node_lines.append(f"\t{node.label};")
+            node_lines.append(
+                f"\t{node.label} [ip=\"{node.ip}\", dp=\"{node.datapath}\"];")
             for edge in node.edges:
                 if edge not in added_edges:
                     added_edges.add(edge)
                     edge_lines.append(
-                        f"\t{edge.lnode.label} -- {edge.rnode.label};")
+                        f"\t{edge.lnode.label} -- {edge.rnode.label} [lport={edge.lport}, rport={edge.rport}];")
         return "graph {\n" + "\n".join(node_lines) + "\n" + "\n".join(edge_lines) + "\n}"
+
+    def node_by_ip(self, ip: str) -> Node:
+        for node in chain(self.servers, self.switches):
+            if node.ip == ip:
+                return node
 
     def sanity_checks(self):
         # Server and Switch lists are clean
@@ -179,7 +198,7 @@ class Topology(object):
         """
         Run breadth-first search to find the shortest paths to all (other) servers.
         """
-        shortest_paths: dict[Node, tuple[int, list[Node]]] = {source: [source]}
+        shortest_paths: dict[Node, list[Node]] = {source: [source]}
         queue: list[Node] = [source]
 
         for node in chain(self.servers, self.switches):
@@ -312,25 +331,30 @@ class Fattree(Topology):
         # Create core switches
         for i in range(0, num_ports_half):
             for j in range(0, num_ports_half):
-                self.switches.append(Node(len(self.switches), "s", f"10.{num_ports}.{i+1}.{j+1}/8"))
+                self.switches.append(
+                    Node(len(self.switches), "s", IPv4Address(f"10.{num_ports}.{i+1}.{j+1}")))
 
         # Create pods
         for pod in range(0, num_ports):
 
             for i in range(0, num_ports_half):
                 # Create (k/2) edge switches
-                self.switches.append(Node(len(self.switches), "s", f"10.{pod}.{i}.1/8"))
+                self.switches.append(
+                    Node(len(self.switches), "s", IPv4Address(f"10.{pod}.{i}.1")))
 
                 for j in range(0, num_ports_half):
                     # Add (k/2) servers per edge switch
-                    self.servers.append(Node(len(self.servers), "h", f"10.{pod}.{i}.{j+2}/8"))
+                    self.servers.append(
+                        Node(len(self.servers), "h", IPv4Address(f"10.{pod}.{i}.{j+2}")))
 
                     # Add edge: edge - server
-                    self.edges.append(self.switches[-1].add_edge(self.servers[-1]))
+                    self.edges.append(
+                        self.switches[-1].add_edge(self.servers[-1]))
 
             for i in range(0, num_ports_half):
                 # Create (k/2) aggregation switches
-                self.switches.append(Node(len(self.switches), "s", f"10.{pod}.{i+num_ports_half}.1/8"))
+                self.switches.append(
+                    Node(len(self.switches), "s", IPv4Address(f"10.{pod}.{i+num_ports_half}.1")))
 
                 # Add edges (cartesian product): edge - aggregation
                 for edge_switch in self.switches[-num_ports_half - 1 - i: -1 - i]:
@@ -339,6 +363,7 @@ class Fattree(Topology):
                 # Add edges: core - aggregation
                 for core_switch in self.switches[i * num_ports_half: (i + 1) * num_ports_half]:
                     self.edges.append(core_switch.add_edge(self.switches[-1]))
+
 
 if __name__ == "__main__":
     topo_fattree = Fattree(4)
