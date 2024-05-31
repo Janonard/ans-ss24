@@ -19,6 +19,7 @@ from tqdm import tqdm
 from itertools import product
 import uuid
 from multiprocessing import Pool
+from ipaddress import IPv4Address
 
 # TODO: remove unnecessary parts
 
@@ -81,6 +82,10 @@ class Node:
     @property
     def ip(self):
         return self.__ip__
+    
+    @property
+    def numeric_ip(self):
+        return int(IPv4Address(self.__ip__.split("/")[0]))
 
     @property
     def label(self):
