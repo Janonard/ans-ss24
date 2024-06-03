@@ -59,7 +59,7 @@ class FattreeNet(Topo):
 def make_mininet_instance(graph_topo):
 
     net_topo = FattreeNet(graph_topo)
-    net = Mininet(topo=net_topo, controller=None, autoSetMacs=True)
+    net = Mininet(topo=net_topo, controller=None, autoSetMacs=True, switch=OVSKernelSwitch, link=TCLink)
     net.addController('c0', controller=RemoteController,
                       ip="127.0.0.1", port=6653)
     return net
@@ -77,7 +77,7 @@ def run(graph_topo):
     net.pingAll()
 
     pairs = []
-    unassigned_hosts = list(graph_topo.servers[0:8])
+    unassigned_hosts = list(graph_topo.servers)
     while len(unassigned_hosts) > 0:
         a_node = random.choice(unassigned_hosts)
         unassigned_hosts.remove(a_node)
@@ -89,7 +89,7 @@ def run(graph_topo):
     info('*** Running Benchmark ***\n')
 
     with ThreadPoolExecutor(max_workers=len(graph_topo.switches)) as executor:
-        performances = executor.map(lambda pair: net.iperf(hosts=pair), pairs)
+        performances = executor.map(lambda pair: net.iperf(hosts=pair, seconds=30), pairs)
     print(list(performances))
     
     info('*** Stopping network ***\n')
