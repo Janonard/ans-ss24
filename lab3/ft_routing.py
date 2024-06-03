@@ -33,6 +33,7 @@ from ryu.app.wsgi import ControllerBase
 
 import topo
 
+
 class FTRouter(app_manager.RyuApp):
 
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -41,15 +42,14 @@ class FTRouter(app_manager.RyuApp):
         super(FTRouter, self).__init__(*args, **kwargs)
         self.topo_net = topo.Fattree(4)
 
-
     # Topology discovery
+
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
-        
+
         # Switches and links in the network
         switches = get_switch(self, None)
         links = get_link(self, None)
-
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -63,18 +63,18 @@ class FTRouter(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
-
     # Add a flow entry to the flow-table
+
     def add_flow(self, datapath, priority, match, actions):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         # Construct flow_mod message and send it
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        inst = [parser.OFPInstructionActions(
+            ofproto.OFPIT_APPLY_ACTIONS, actions)]
         mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
                                 match=match, instructions=inst)
         datapath.send_msg(mod)
-
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):

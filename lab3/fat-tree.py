@@ -18,6 +18,8 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import random
+import re
+import json
 
 import mininet
 import mininet.clean
@@ -30,7 +32,6 @@ from mininet.topo import Topo
 from mininet.util import waitListening, custom
 
 import topo
-
 
 
 class FattreeNet(Topo):
@@ -59,7 +60,8 @@ class FattreeNet(Topo):
 def make_mininet_instance(graph_topo):
 
     net_topo = FattreeNet(graph_topo)
-    net = Mininet(topo=net_topo, controller=None, autoSetMacs=True, switch=OVSKernelSwitch, link=TCLink)
+    net = Mininet(topo=net_topo, controller=None, autoSetMacs=True,
+                  switch=OVSKernelSwitch, link=TCLink)
     net.addController('c0', controller=RemoteController,
                       ip="127.0.0.1", port=6653)
     return net
@@ -77,7 +79,7 @@ def run(graph_topo):
     net.pingAll()
 
     pairs = []
-    unassigned_hosts = list(graph_topo.servers)
+    unassigned_hosts = list(graph_topo.servers[0:8])
     while len(unassigned_hosts) > 0:
         a_node = random.choice(unassigned_hosts)
         unassigned_hosts.remove(a_node)
@@ -89,9 +91,19 @@ def run(graph_topo):
     info('*** Running Benchmark ***\n')
 
     with ThreadPoolExecutor(max_workers=len(graph_topo.switches)) as executor:
-        performances = executor.map(lambda pair: net.iperf(hosts=pair, seconds=30), pairs)
-    print(list(performances))
-    
+        raw_out = executor.map(lambda pair: net.iperf(
+            hosts=pair, seconds=30), pairs)
+
+    perf_re = re.compile(r"([0-9]+\.[0-9]+) Mbits/sec")
+    performances = dict()
+    for ((a_node, b_node), (raw_perf_a, raw_perf_b)) in zip(pairs, raw_out):
+        perf_a = perf_re.match(raw_perf_a)[1]
+        perf_b = perf_re.match(raw_perf_b)[1]
+        performances[f"{a_node.IP()}/{b_node.IP()}"] = (perf_a, perf_b)
+
+    with open("throughput.json", "w") as out_file:
+        json.dump(performances, out_file)
+
     info('*** Stopping network ***\n')
     net.stop()
 

@@ -16,10 +16,17 @@
 
 #!/usr/bin/env python3
 
+from concurrent.futures import ThreadPoolExecutor
+import time
+import datetime
+import sys
+import json
+
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
+from ryu.controller.controller import Datapath
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import *
 
@@ -37,6 +44,44 @@ class SPRouter(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(SPRouter, self).__init__(*args, **kwargs)
         self.topo_net = topo.Fattree(4)
+
+        def request_port_stats():
+            try:
+                while True:
+                    # Await next interval
+                    time.sleep(5)
+
+                    # Write current data
+                    with open("packet_counts.json", "w") as out_file:
+                        json.dump(self.packet_data, out_file)
+
+                    for switch in self.topo_net.switches:
+                        dp: Datapath = switch.datapath
+                        if dp is None:
+                            continue
+
+                        ofproto = dp.ofproto
+                        parser = dp.ofproto_parser
+
+                        # Send a request for stats
+                        dp.send_msg(parser.OFPPortStatsRequest(
+                            dp, 0, ofproto.OFPP_ANY))
+            except Exception as e:
+                print(e, file=sys.stderr)
+
+        self.thread_pool = ThreadPoolExecutor()
+        self.thread_pool.submit(request_port_stats)
+        self.packet_data = list()
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def handle_ports_stats_reply(self, ev):
+        dp: Datapath = ev.msg.datapath
+        ip = IPv4Address(dp.id)
+        data = dict()
+        for stat in ev.msg.body:
+            data[stat.port_no] = stat.tx_packets
+        self.packet_data.append({"ip": str(ip), "time": str(
+            datetime.datetime.now()), "counts": data})
 
     # Topology discovery
 
