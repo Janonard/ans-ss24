@@ -16,9 +16,8 @@
 
 #!/usr/bin/env python3
 
-import os
-import subprocess
-import time
+from concurrent.futures import ThreadPoolExecutor
+import random
 
 import mininet
 import mininet.clean
@@ -31,6 +30,7 @@ from mininet.topo import Topo
 from mininet.util import waitListening, custom
 
 import topo
+
 
 
 class FattreeNet(Topo):
@@ -74,9 +74,24 @@ def run(graph_topo):
 
     info('*** Starting network ***\n')
     net.start()
-    info('*** Running CLI ***\n')
-    # net.pingAll()
-    CLI(net)
+    net.pingAll()
+
+    pairs = []
+    unassigned_hosts = list(graph_topo.servers[0:8])
+    while len(unassigned_hosts) > 0:
+        a_node = random.choice(unassigned_hosts)
+        unassigned_hosts.remove(a_node)
+        b_node = random.choice(unassigned_hosts)
+        unassigned_hosts.remove(b_node)
+
+        pairs.append([net.get(a_node.label), net.get(b_node.label)])
+
+    info('*** Running Benchmark ***\n')
+
+    with ThreadPoolExecutor(max_workers=len(graph_topo.switches)) as executor:
+        performances = executor.map(lambda pair: net.iperf(hosts=pair), pairs)
+    print(list(performances))
+    
     info('*** Stopping network ***\n')
     net.stop()
 

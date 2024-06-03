@@ -28,7 +28,7 @@ Vagrant.configure("2") do |config|
   # Specify the memory and CPU cores for the VM
   config.vm.provider :virtualbox do |vb|
     vb.memory = 8192    # 8 GB
-    vb.cpus = 4         # 4 cores
+    vb.cpus = 8         # 4 cores
   end
 
   # Install the packages and libraries needed by the labs
