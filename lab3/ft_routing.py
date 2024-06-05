@@ -97,7 +97,7 @@ class FTRouter(app_manager.RyuApp):
                         dp,
                         2,
                         parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP,
-                                        arp_spa=(self.get_network_address(other_ip, 24), "255.255.255.0")),
+                                        arp_tpa=(self.get_network_address(other_ip, 24), "255.255.255.0")),
                         [parser.OFPActionOutput(port)]
                     )
             else:
@@ -115,7 +115,7 @@ class FTRouter(app_manager.RyuApp):
                         dp,
                         2,
                         parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP,
-                                        arp_spa=self.get_network_address(other_ip, 16)),
+                                        arp_tpa=self.get_network_address(other_ip, 16)),
                         [parser.OFPActionOutput(port)]
                     )
                 # aggregation -> Core
@@ -216,63 +216,34 @@ class FTRouter(app_manager.RyuApp):
         else:
             return  # Neither IP nor ARP, ignore packet
         
-        print("own ip", switch_ip)
-        # Check destination is connected
-        if self.get_octet_value(switch_ip, 2) == self.get_octet_value(dst_ip, 2):
-            
-            out_ports = list(range(1, 5))
-            for edge in switch_node.edges:
-                if edge.lnode == switch_node:
-                    edge_out_port = edge.lport
-                    edge_dst = edge.rnode
-                else:
-                    edge_out_port = edge.rport
-                    edge_dst = edge.lnode
-
-                if edge_out_port is None:
-                    continue
-
-                if edge_dst.ip == dst_ip:
-                    # We know exactly where to send the packet to, short circuit
-                    out_ports = [edge_out_port]
-                    break
-                else:
-                    # We know that this port goes to a switch/host we don't want to address.
-                    # Remove this port
-                    out_ports.remove(edge_out_port)
-
-            datapath.send_msg(
-                parser.OFPPacketOut(
-                    datapath=datapath, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
-                    actions=[parser.OFPActionOutput(out_port)
-                            for out_port in out_ports],
-                    data=msg.data
-                )
-            )
-            return
+        # Logging
+        print(f"{src_ip} -> {dst_ip} (Switch {switch_ip})")
         
-        # Check source is connected
-        if self.get_octet_value(switch_ip, 2) == self.get_octet_value(src_ip, 2):
-
-            # We are no core switch
-            if self.get_octet_value(switch_ip, 1) == self.k:
-                return
+        # Edge switch, handling an outgoing packet
+        if self.get_octet_value(switch_ip, 2) == self.get_octet_value(src_ip, 2) and self.get_octet_value(switch_ip, 1) == self.get_octet_value(src_ip, 1):
             
             # edge -> server
             self.add_flow(
                 datapath,
-                1,
-                parser.OFPMatch(ipv4_dst=src_ip),
+                2,
+                parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP, ipv4_dst=src_ip),
+                [parser.OFPActionOutput(switch_port)]
+            )
+            self.add_flow(
+                datapath,
+                2,
+                parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP, arp_tpa=src_ip),
                 [parser.OFPActionOutput(switch_port)]
             )
 
             # edge -> aggregation
+            """
             host_id = self.get_octet_value(src_ip, 3)
-            dest_switch = str(switch_ip).split(".")
-            dest_switch[2] = str(host_id - 2 + int(self.k / 2))
-            dest_switch = ".".join(dest_switch)
+            dest_switch_ip = str(switch_ip).split(".")
+            dest_switch_ip[2] = str(host_id - 2 + int(self.k / 2))
+            dest_switch_ip = IPv4Address(".".join(dest_switch_ip))
 
-            dest_node = self.topo_net.node_by_ip(IPv4Address(dest_switch))
+            dest_node = self.topo_net.node_by_ip(dest_switch_ip)
 
             dest_port = None
             for edge in dest_node.edges:
@@ -285,31 +256,67 @@ class FTRouter(app_manager.RyuApp):
 
             if dest_port == None:
                 return
+            """
 
+            out_port = None
+            for edge in switch_node.edges:
+                if edge.lnode == switch_node and self.get_octet_value(edge.rnode.ip, 3) == 1:
+                    out_port = edge.lport
+                    break
+                elif edge.rnode == switch_node and self.get_octet_value(edge.lnode.ip, 3) == 1:
+                    out_port = edge.rport
+                    break
+            assert out_port is not None, f"Switch: {switch_ip}"
 
             self.add_flow(
                 datapath,
                 1,
                 parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP,
-                                ipv4_src=(f"0.0.0.{host_id}", "0.0.0.255")),
-                [parser.OFPActionOutput(dest_port)]
+                                ipv4_src=src_ip),
+                [parser.OFPActionOutput(out_port)]
             )
             self.add_flow(
                 datapath,
                 1,
                 parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP,
-                                arp_spa=(f"0.0.0.{host_id}", "0.0.0.255")),
-                [parser.OFPActionOutput(dest_port)]
+                                arp_tpa=src_ip),
+                [parser.OFPActionOutput(out_port)]
             )
-            
-            # Send message to next switch
-            datapath.send_msg(
-                parser.OFPPacketOut(
-                    datapath=datapath, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
-                    actions=[parser.OFPActionOutput(dest_port)],
-                    data=msg.data
-                )
+        
+        # Immediately forward packet
+        final_switch_ip = str(dst_ip).split(".")
+        final_switch_ip[3] = "1"
+        final_switch_ip = IPv4Address(".".join(final_switch_ip))
+        final_switch = self.topo_net.node_by_ip(final_switch_ip)
+
+        out_ports = list(range(1, 5))
+        for edge in final_switch.edges:
+            if edge.lnode == final_switch:
+                edge_out_port = edge.lport
+                edge_dst = edge.rnode
+            else:
+                edge_out_port = edge.rport
+                edge_dst = edge.lnode
+
+            if edge_out_port is None:
+                continue
+
+            if edge_dst.ip == dst_ip:
+                # We know exactly where to send the packet to, short circuit
+                out_ports = [edge_out_port]
+                break
+            else:
+                # We know that this port goes to a switch/host we don't want to address.
+                # Remove this port
+                out_ports.remove(edge_out_port)
+
+        final_switch.datapath.send_msg(
+            parser.OFPPacketOut(
+                datapath=final_switch.datapath, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
+                actions=[parser.OFPActionOutput(out_port) for out_port in out_ports],
+                data=msg.data
             )
+        )
 
 
 
