@@ -78,6 +78,7 @@ def run(graph_topo):
     net.start()
     net.pingAll()
 
+    """
     pairs = []
     unassigned_hosts = list(graph_topo.servers[0:8])
     while len(unassigned_hosts) > 0:
@@ -87,6 +88,9 @@ def run(graph_topo):
         unassigned_hosts.remove(b_node)
 
         pairs.append([net.get(a_node.label), net.get(b_node.label)])
+    """
+    pairs = [("h0", "h8"), ("h2", "h10"), ("h4", "h12"), ("h6", "h14")]
+    pairs = [(net.get(a_node), net.get(b_node)) for (a_node, b_node) in pairs]
 
     info('*** Running Benchmark ***\n')
 

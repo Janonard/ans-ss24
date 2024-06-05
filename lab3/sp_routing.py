@@ -164,6 +164,8 @@ class SPRouter(app_manager.RyuApp):
         src_node = self.topo_net.node_by_ip(src_ip)
         dst_node = self.topo_net.node_by_ip(dst_ip)
 
+        print(f"Packet in: {src_ip} -> {dst_ip}; Switch {switch_ip}")
+
         # Computing the shortest path
         path = self.topo_net.single_source_shortest_paths(
             switch_node, dst_node)[dst_node]
@@ -205,8 +207,9 @@ class SPRouter(app_manager.RyuApp):
             )
         )
 
-        # Installing forwarding rules according to the shortest path (if possible)
-        for i_node in range(len(path)-1):
+        # Installing forwarding rules according to the shortest path
+        # We exclude the final edge switch, since it learns its forwarding rule via port learning.
+        for i_node in range(len(path)-2):
             hop_src_node = path[i_node]
             hop_dst_node = path[i_node+1]
 
@@ -247,3 +250,17 @@ class SPRouter(app_manager.RyuApp):
                 edge.lport = msg.match["in_port"]
             elif edge.rnode == switch_node and edge.lnode.ip == src_ip:
                 edge.rport = msg.match["in_port"]
+
+        # Install host forwarding rule
+        self.add_flow(
+            switch_node.datapath,
+            1,
+            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP, ipv4_dst=str(src_ip)),
+            [parser.OFPActionOutput(msg.match["in_port"])]
+        )
+        self.add_flow(
+            switch_node.datapath,
+            1,
+            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP, arp_tpa=str(src_ip)),
+            [parser.OFPActionOutput(msg.match["in_port"])]
+        )
