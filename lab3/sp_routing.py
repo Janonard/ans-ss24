@@ -21,6 +21,8 @@ import time
 import datetime
 import sys
 import json
+import socketserver
+import socket
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -45,20 +47,24 @@ class SPRouter(app_manager.RyuApp):
         super(SPRouter, self).__init__(*args, **kwargs)
         self.topo_net = topo.Fattree(4)
 
-        def request_port_stats():
-            try:
-                while True:
-                    # Await next interval
-                    time.sleep(5)
+        self.packet_data = dict()
+        self.missing_packet_data = list()
 
-                    # Write current data
-                    with open("packet_counts.json", "w") as out_file:
-                        json.dump(self.packet_data, out_file)
+        router = self
+        class DataRequestHandler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                text = self.request[0]
+                if text == b"Start":
+                    router.packet_data = dict()
+                    # TODO: Reset port stats counters
+                if text == b"End":
+                    router.missing_packet_data = list()
+                    for switch in router.topo_net.switches:
 
-                    for switch in self.topo_net.switches:
                         dp: Datapath = switch.datapath
                         if dp is None:
                             continue
+                        router.missing_packet_data.append(IPv4Address(dp.id))
 
                         ofproto = dp.ofproto
                         parser = dp.ofproto_parser
@@ -66,22 +72,29 @@ class SPRouter(app_manager.RyuApp):
                         # Send a request for stats
                         dp.send_msg(parser.OFPPortStatsRequest(
                             dp, 0, ofproto.OFPP_ANY))
-            except Exception as e:
-                print(e, file=sys.stderr)
+        
+        def serve_data_requests():
+            with socketserver.UnixDatagramServer("/tmp/controller_data_server", DataRequestHandler) as dataserver:
+                dataserver.serve_forever()
 
         self.thread_pool = ThreadPoolExecutor()
-        self.thread_pool.submit(request_port_stats)
-        self.packet_data = list()
+        self.thread_pool.submit(serve_data_requests)
+        
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def handle_ports_stats_reply(self, ev):
         dp: Datapath = ev.msg.datapath
         ip = IPv4Address(dp.id)
+        self.missing_packet_data.remove(ip)
+
         data = dict()
         for stat in ev.msg.body:
             data[stat.port_no] = stat.tx_packets
-        self.packet_data.append({"ip": str(ip), "time": str(
-            datetime.datetime.now()), "counts": data})
+        self.packet_data[str(ip)] = data
+        
+        if len(self.missing_packet_data) == 0:
+            with open("packet_counts.json", "w") as out_file:
+                json.dump(self.packet_data, out_file)
 
     # Topology discovery
 

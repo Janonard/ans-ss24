@@ -18,6 +18,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import random
+import socket
 import re
 import json
 
@@ -73,6 +74,7 @@ def run(graph_topo):
     lg.setLogLevel('info')
     mininet.clean.cleanup()
     net = make_mininet_instance(graph_topo)
+    controller_data_server = socket.socket(socket.AddressFamily.AF_UNIX, socket.SocketKind.SOCK_DGRAM)
 
     info('*** Starting network ***\n')
     net.start()
@@ -94,9 +96,11 @@ def run(graph_topo):
 
     info('*** Running Benchmark ***\n')
 
+    controller_data_server.sendto(b"Start", "/tmp/controller_data_server")
     with ThreadPoolExecutor(max_workers=len(graph_topo.switches)) as executor:
         raw_out = executor.map(lambda pair: net.iperf(
             hosts=pair, seconds=30), pairs)
+    controller_data_server.sendto(b"End", "/tmp/controller_data_server")
 
     perf_re = re.compile(r"([0-9]+\.[0-9]+) Mbits/sec")
     performances = dict()
