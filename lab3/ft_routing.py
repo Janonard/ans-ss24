@@ -80,7 +80,6 @@ class FTRouter(app_manager.RyuApp):
                 edge.rport = link.src.port_no
  
             # Add flow rules for connected device
-            # TODO: adjust priorities
 
             if self.get_octet_value(switch_ip, 1) == self.get_octet_value(other_ip, 1):
                 # aggregation -> edge
@@ -120,44 +119,21 @@ class FTRouter(app_manager.RyuApp):
                     )
                 # aggregation -> Core
                 else:
-                    # for host_id in range (2, self.k / 2 - 1):
-
-                    #     dest_switch = str(f"10.{self.k}").split(".")
-                    #     dest_switch[2] = str(host_id - 2 + int(self.k / 2))
-                    #     dest_switch = ".".join(dest_switch)
-
-                    #     print(dest_switch)
-
-                    #     dest_node = self.topo_net.node_by_ip(IPv4Address(dest_switch))
-
-                    #     dest_port = None
-                    #     for edge in dest_node.edges:
-                    #         if edge.lnode.ip == switch_ip:
-                    #             dest_port = edge.lport
-                    #             break
-                    #         elif edge.rnode.ip == switch_ip:
-                    #             dest_port = edge.rport
-                    #             break
-
-                    #     if dest_port == None:
-                    #         return
-
-
-                    #     self.add_flow(
-                    #         dp,
-                    #         1,
-                    #         parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP,
-                    #                         ipv4_src=(f"0.0.0.{host_id}", "0.0.0.255")),
-                    #         [parser.OFPActionOutput(dest_port)]
-                    #     )
-                    #     self.add_flow(
-                    #         dp,
-                    #         1,
-                    #         parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP,
-                    #                         arp_spa=(f"0.0.0.{host_id}", "0.0.0.255")),
-                    #         [parser.OFPActionOutput(dest_port)]
-                    #     )
-                    print()
+                    # Any core switch is fine for now...
+                    self.add_flow(
+                        dp,
+                        1,
+                        parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP,
+                                        ipv4_src=("10.0.0.0", "255.0.0.0")),
+                        [parser.OFPActionOutput(port)]
+                    )
+                    self.add_flow(
+                        dp,
+                        1,
+                        parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP,
+                                        arp_spa=("10.0.0.0", "255.0.0.0")),
+                        [parser.OFPActionOutput(port)]
+                    )
     
         # Export topo
         with open("topo.dot", "w") as topo_file:
@@ -229,7 +205,7 @@ class FTRouter(app_manager.RyuApp):
                 elif edge.rnode == switch_node and edge.lnode.ip == src_ip:
                     edge.rport = switch_port
             
-            # edge -> server
+            # edge -> server flow rules
             self.add_flow(
                 datapath,
                 2,
@@ -243,28 +219,8 @@ class FTRouter(app_manager.RyuApp):
                 [parser.OFPActionOutput(switch_port)]
             )
 
-            # edge -> aggregation
-            """
-            host_id = self.get_octet_value(src_ip, 3)
-            dest_switch_ip = str(switch_ip).split(".")
-            dest_switch_ip[2] = str(host_id - 2 + int(self.k / 2))
-            dest_switch_ip = IPv4Address(".".join(dest_switch_ip))
-
-            dest_node = self.topo_net.node_by_ip(dest_switch_ip)
-
-            dest_port = None
-            for edge in dest_node.edges:
-                if edge.lnode.ip == switch_ip:
-                    dest_port = edge.lport
-                    break
-                elif edge.rnode.ip == switch_ip:
-                    dest_port = edge.rport
-                    break
-
-            if dest_port == None:
-                return
-            """
-
+            # edge -> aggregation flow rules
+            # Find any aggregation switch to forward to
             out_port = None
             for edge in switch_node.edges:
                 if edge.lnode == switch_node and self.get_octet_value(edge.rnode.ip, 3) == 1:
@@ -290,7 +246,7 @@ class FTRouter(app_manager.RyuApp):
                 [parser.OFPActionOutput(out_port)]
             )
         
-        # Immediately forward packet
+        # Forward packet via final edge switch
         final_switch_ip = str(dst_ip).split(".")
         final_switch_ip[3] = "1"
         final_switch_ip = IPv4Address(".".join(final_switch_ip))
@@ -317,7 +273,6 @@ class FTRouter(app_manager.RyuApp):
                 # Remove this port
                 out_ports.remove(edge_out_port)
 
-        print(final_switch_ip, out_ports)
         final_switch.datapath.send_msg(
             parser.OFPPacketOut(
                 datapath=final_switch.datapath, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
