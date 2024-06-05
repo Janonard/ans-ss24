@@ -29,7 +29,7 @@ from ryu.topology.api import get_switch, get_link
 from ryu.app.wsgi import ControllerBase
 
 from ipaddress import IPv4Address
-from ipaddress import ip_interface
+from ipaddress import IPv4Network
 import topo
 
 
@@ -47,7 +47,7 @@ class FTRouter(app_manager.RyuApp):
         return int(str(ip_address).split('.')[octet_number])
    
     def get_network_address(self, ip_address, subnet):
-        return ip_interface(f"{ip_address}/{subnet}")
+        return IPv4Network(f"{ip_address}/{subnet}", strict = False).network_address
 
     # Topology discovery
 
@@ -85,6 +85,7 @@ class FTRouter(app_manager.RyuApp):
             if self.get_octet_value(switch_ip, 1) == self.get_octet_value(other_ip, 1):
                 # aggregation -> edge
                 if self.get_octet_value(switch_ip, 2) > self.get_octet_value(other_ip, 2):
+                    print("create rule:", switch_ip, self.get_network_address(other_ip, 24), port)
                     self.add_flow(
                         dp,
                         2,
@@ -102,6 +103,7 @@ class FTRouter(app_manager.RyuApp):
             else:
                 # core -> aggregation
                 if self.get_octet_value(switch_ip, 1) > self.get_octet_value(other_ip, 1):
+                    print("create rule:", switch_ip, self.get_network_address(other_ip, 16), port)
                     self.add_flow(
                         dp,
                         2,
@@ -214,10 +216,9 @@ class FTRouter(app_manager.RyuApp):
         else:
             return  # Neither IP nor ARP, ignore packet
         
-        print("dest switch", switch_ip)
+        print("own ip", switch_ip)
         # Check destination is connected
         if self.get_octet_value(switch_ip, 2) == self.get_octet_value(dst_ip, 2):
-            
             
             out_ports = list(range(1, 5))
             for edge in switch_node.edges:
@@ -270,8 +271,6 @@ class FTRouter(app_manager.RyuApp):
             dest_switch = str(switch_ip).split(".")
             dest_switch[2] = str(host_id - 2 + int(self.k / 2))
             dest_switch = ".".join(dest_switch)
-
-            print(dest_switch)
 
             dest_node = self.topo_net.node_by_ip(IPv4Address(dest_switch))
 
