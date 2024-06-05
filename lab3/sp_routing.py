@@ -16,20 +16,9 @@
 
 #!/usr/bin/env python3
 
-from concurrent.futures import ThreadPoolExecutor
-import time
-import datetime
-import sys
-import json
-import socketserver
-import socket
-
-from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
-from ryu.controller.controller import Datapath
-from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import *
 
 from ryu.topology import event
@@ -39,62 +28,7 @@ from ipaddress import IPv4Address
 import topo
 
 
-class SPRouter(app_manager.RyuApp):
-
-    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-
-    def __init__(self, *args, **kwargs):
-        super(SPRouter, self).__init__(*args, **kwargs)
-        self.topo_net = topo.Fattree(4)
-
-        self.packet_data = dict()
-        self.missing_packet_data = list()
-
-        router = self
-        class DataRequestHandler(socketserver.BaseRequestHandler):
-            def handle(self) -> None:
-                text = self.request[0]
-                if text == b"Start":
-                    router.packet_data = dict()
-                    # TODO: Reset port stats counters
-                if text == b"End":
-                    router.missing_packet_data = list()
-                    for switch in router.topo_net.switches:
-
-                        dp: Datapath = switch.datapath
-                        if dp is None:
-                            continue
-                        router.missing_packet_data.append(IPv4Address(dp.id))
-
-                        ofproto = dp.ofproto
-                        parser = dp.ofproto_parser
-
-                        # Send a request for stats
-                        dp.send_msg(parser.OFPPortStatsRequest(
-                            dp, 0, ofproto.OFPP_ANY))
-        
-        def serve_data_requests():
-            with socketserver.UnixDatagramServer("/tmp/controller_data_server", DataRequestHandler) as dataserver:
-                dataserver.serve_forever()
-
-        self.thread_pool = ThreadPoolExecutor()
-        self.thread_pool.submit(serve_data_requests)
-        
-
-    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
-    def handle_ports_stats_reply(self, ev):
-        dp: Datapath = ev.msg.datapath
-        ip = IPv4Address(dp.id)
-        self.missing_packet_data.remove(ip)
-
-        data = dict()
-        for stat in ev.msg.body:
-            data[stat.port_no] = stat.tx_packets
-        self.packet_data[str(ip)] = data
-        
-        if len(self.missing_packet_data) == 0:
-            with open("packet_counts.json", "w") as out_file:
-                json.dump(self.packet_data, out_file)
+class SPRouter(topo.ReportingRouter):
 
     # Topology discovery
 
@@ -123,31 +57,6 @@ class SPRouter(app_manager.RyuApp):
 
         with open("topo.dot", "w") as topo_file:
             topo_file.write(self.topo_net.to_dot())
-
-    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
-    def switch_features_handler(self, ev):
-        datapath = ev.msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        # Install entry-miss flow entry
-        match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                          ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
-
-    # Add a flow entry to the flow-table
-
-    def add_flow(self, datapath, priority, match, actions):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        # Construct flow_mod message and send it
-        inst = [parser.OFPInstructionActions(
-            ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
-                                match=match, instructions=inst)
-        datapath.send_msg(mod)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -268,12 +177,14 @@ class SPRouter(app_manager.RyuApp):
         self.add_flow(
             switch_node.datapath,
             1,
-            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP, ipv4_dst=str(src_ip)),
+            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP,
+                            ipv4_dst=str(src_ip)),
             [parser.OFPActionOutput(msg.match["in_port"])]
         )
         self.add_flow(
             switch_node.datapath,
             1,
-            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP, arp_tpa=str(src_ip)),
+            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP,
+                            arp_tpa=str(src_ip)),
             [parser.OFPActionOutput(msg.match["in_port"])]
         )

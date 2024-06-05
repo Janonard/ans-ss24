@@ -74,43 +74,26 @@ def run(graph_topo):
     lg.setLogLevel('info')
     mininet.clean.cleanup()
     net = make_mininet_instance(graph_topo)
-    controller_data_server = socket.socket(socket.AddressFamily.AF_UNIX, socket.SocketKind.SOCK_DGRAM)
+    controller_data_server = socket.socket(
+        socket.AddressFamily.AF_INET, socket.SocketKind.SOCK_DGRAM)
 
     info('*** Starting network ***\n')
     net.start()
     net.pingAll()
 
-    """
-    pairs = []
-    unassigned_hosts = list(graph_topo.servers[0:8])
-    while len(unassigned_hosts) > 0:
-        a_node = random.choice(unassigned_hosts)
-        unassigned_hosts.remove(a_node)
-        b_node = random.choice(unassigned_hosts)
-        unassigned_hosts.remove(b_node)
-
-        pairs.append([net.get(a_node.label), net.get(b_node.label)])
-    """
     pairs = [("h0", "h8"), ("h2", "h10"), ("h4", "h12"), ("h6", "h14")]
     pairs = [(net.get(a_node), net.get(b_node)) for (a_node, b_node) in pairs]
 
     info('*** Running Benchmark ***\n')
 
-    controller_data_server.sendto(b"Start", "/tmp/controller_data_server")
+    controller_data_server.sendto(b"Start", ("localhost", 4711))
+    assert controller_data_server.recv(4) == b"Done"
+
     with ThreadPoolExecutor(max_workers=len(graph_topo.switches)) as executor:
-        raw_out = executor.map(lambda pair: net.iperf(
-            hosts=pair, seconds=30), pairs)
-    controller_data_server.sendto(b"End", "/tmp/controller_data_server")
+        executor.map(lambda pair: net.iperf(hosts=pair, seconds=30), pairs)
 
-    perf_re = re.compile(r"([0-9]+\.[0-9]+) Mbits/sec")
-    performances = dict()
-    for ((a_node, b_node), (raw_perf_a, raw_perf_b)) in zip(pairs, raw_out):
-        perf_a = perf_re.match(raw_perf_a)[1]
-        perf_b = perf_re.match(raw_perf_b)[1]
-        performances[f"{a_node.IP()}/{b_node.IP()}"] = (perf_a, perf_b)
-
-    with open("throughput.json", "w") as out_file:
-        json.dump(performances, out_file)
+    controller_data_server.sendto(b"Stop", ("localhost", 4711))
+    assert controller_data_server.recv(4) == b"Done"
 
     info('*** Stopping network ***\n')
     net.stop()
