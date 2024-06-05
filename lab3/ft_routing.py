@@ -222,6 +222,13 @@ class FTRouter(app_manager.RyuApp):
         # Edge switch, handling an outgoing packet
         if self.get_octet_value(switch_ip, 2) == self.get_octet_value(src_ip, 2) and self.get_octet_value(switch_ip, 1) == self.get_octet_value(src_ip, 1):
             
+            # Port learning for hosts
+            for edge in switch_node.edges:
+                if edge.lnode == switch_node and edge.rnode.ip == src_ip:
+                    edge.lport = switch_port
+                elif edge.rnode == switch_node and edge.lnode.ip == src_ip:
+                    edge.rport = switch_port
+            
             # edge -> server
             self.add_flow(
                 datapath,
@@ -310,6 +317,7 @@ class FTRouter(app_manager.RyuApp):
                 # Remove this port
                 out_ports.remove(edge_out_port)
 
+        print(final_switch_ip, out_ports)
         final_switch.datapath.send_msg(
             parser.OFPPacketOut(
                 datapath=final_switch.datapath, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
