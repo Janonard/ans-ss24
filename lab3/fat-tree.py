@@ -16,9 +16,11 @@
 
 #!/usr/bin/env python3
 
-import os
-import subprocess
-import time
+from concurrent.futures import ThreadPoolExecutor
+import random
+import socket
+import re
+import json
 
 import mininet
 import mininet.clean
@@ -59,7 +61,8 @@ class FattreeNet(Topo):
 def make_mininet_instance(graph_topo):
 
     net_topo = FattreeNet(graph_topo)
-    net = Mininet(topo=net_topo, controller=None, autoSetMacs=True)
+    net = Mininet(topo=net_topo, controller=None, autoSetMacs=True,
+                  switch=OVSKernelSwitch, link=TCLink)
     net.addController('c0', controller=RemoteController,
                       ip="127.0.0.1", port=6653)
     return net
@@ -71,12 +74,27 @@ def run(graph_topo):
     lg.setLogLevel('info')
     mininet.clean.cleanup()
     net = make_mininet_instance(graph_topo)
+    controller_data_server = socket.socket(
+        socket.AddressFamily.AF_INET, socket.SocketKind.SOCK_DGRAM)
 
     info('*** Starting network ***\n')
     net.start()
-    info('*** Running CLI ***\n')
-    # net.pingAll()
-    CLI(net)
+    net.pingAll()
+
+    pairs = [("h0", "h8"), ("h2", "h10"), ("h4", "h12"), ("h6", "h14")]
+    pairs = [(net.get(a_node), net.get(b_node)) for (a_node, b_node) in pairs]
+
+    info('*** Running Benchmark ***\n')
+
+    controller_data_server.sendto(b"Start", ("localhost", 4711))
+    assert controller_data_server.recv(4) == b"Done"
+
+    with ThreadPoolExecutor(max_workers=len(graph_topo.switches)) as executor:
+        executor.map(lambda pair: net.iperf(hosts=pair, seconds=30), pairs)
+
+    controller_data_server.sendto(b"Stop", ("localhost", 4711))
+    assert controller_data_server.recv(4) == b"Done"
+
     info('*** Stopping network ***\n')
     net.stop()
 

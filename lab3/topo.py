@@ -13,15 +13,123 @@
  See the License for the specific language governing permissions and
  limitations under the License.
  """
-from random import sample, choice
-from itertools import cycle, chain
+from concurrent.futures import ThreadPoolExecutor
+from itertools import chain
 from tqdm import tqdm
-from itertools import product
-import uuid
 from multiprocessing import Pool
 from ipaddress import IPv4Address
+import json
+import socketserver
+import threading
 
-# TODO: remove unnecessary parts
+from ryu.base import app_manager
+from ryu.controller import ofp_event
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import set_ev_cls
+from ryu.controller.controller import Datapath
+from ryu.ofproto import ofproto_v1_3
+
+
+class ReportingRouter(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+
+    def __init__(self, *args, **kwargs):
+        super(ReportingRouter, self).__init__(*args, **kwargs)
+        self.topo_net = Fattree(4)
+
+        self.data_collection_state = None
+        self.collection_done = threading.Event()
+        self.pre_port_data = dict()
+        self.post_port_data = dict()
+        self.missing_switches_for_data = list()
+
+        router = self
+
+        class DataRequestHandler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                text = self.request[0]
+                if text == b"Start":
+                    router.data_collection_state = "Start"
+                elif text == b"Stop":
+                    router.data_collection_state = "Stop"
+                else:
+                    return
+                
+                router.collection_done.clear()
+                router.missing_switches_for_data = list()
+                for switch in router.topo_net.switches:
+
+                    dp: Datapath = switch.datapath
+                    if dp is None:
+                        continue
+                    router.missing_switches_for_data.append(
+                        IPv4Address(dp.id))
+
+                    ofproto = dp.ofproto
+                    parser = dp.ofproto_parser
+
+                    # Send a request for stats
+                    dp.send_msg(parser.OFPPortStatsRequest(
+                        dp, 0, ofproto.OFPP_ANY))
+                
+                router.collection_done.wait()
+                self.request[1].sendto(b"Done", self.client_address)
+
+        def serve_data_requests():
+            with socketserver.UDPServer(("localhost", 4711), DataRequestHandler) as dataserver:
+                dataserver.serve_forever()
+
+        self.thread_pool = ThreadPoolExecutor()
+        self.thread_pool.submit(serve_data_requests)
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def handle_ports_stats_reply(self, ev):
+        dp: Datapath = ev.msg.datapath
+        ip = IPv4Address(dp.id)
+        self.missing_switches_for_data.remove(ip)
+
+        ip = str(ip)
+        data = {stat.port_no: stat.tx_bytes for stat in ev.msg.body}
+        if self.data_collection_state == "Start":
+            self.pre_port_data[ip] = data
+        else:
+            self.post_port_data[ip] = data
+
+        if len(self.missing_switches_for_data) == 0:
+            self.collection_done.set()
+            if self.data_collection_state == "Stop":
+                port_data = dict()
+                for ip in self.post_port_data.keys():
+                    port_data[ip] = dict()
+                    for port in self.post_port_data[ip].keys():
+                        port_data[ip][port] = self.post_port_data[ip][port] - self.pre_port_data[ip][port]
+                with open("sent_bytes.json", "w") as out_file:
+                    json.dump(port_data, out_file)
+
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Install entry-miss flow entry
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
+
+    # Add a flow entry to the flow-table
+
+    def add_flow(self, datapath, priority, match, actions):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Construct flow_mod message and send it
+        inst = [parser.OFPInstructionActions(
+            ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                match=match, instructions=inst)
+        datapath.send_msg(mod)
 
 
 class Edge:

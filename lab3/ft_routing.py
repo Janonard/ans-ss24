@@ -34,6 +34,7 @@ from ryu.app.wsgi import ControllerBase
 from ipaddress import IPv4Address
 import topo
 
+
 class FTRouter(app_manager.RyuApp):
 
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -50,6 +51,7 @@ class FTRouter(app_manager.RyuApp):
         return ipaddress.ip_interface(f"{ip_address}/{subnet}")
 
     # Topology discovery
+
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
         # Add IP information to topo switch
@@ -113,7 +115,6 @@ class FTRouter(app_manager.RyuApp):
         with open("topo.dot", "w") as topo_file:
             topo_file.write(self.topo_net.to_dot())
 
-
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -126,14 +127,15 @@ class FTRouter(app_manager.RyuApp):
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
 
-
     # Add a flow entry to the flow-table
+
     def add_flow(self, datapath, priority, match, actions):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         # Construct flow_mod message and send it
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        inst = [parser.OFPInstructionActions(
+            ofproto.OFPIT_APPLY_ACTIONS, actions)]
         mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
                                 match=match, instructions=inst)
         datapath.send_msg(mod)
