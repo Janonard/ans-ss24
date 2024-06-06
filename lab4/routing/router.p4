@@ -13,11 +13,26 @@ header ethernet_t {
     bit<16> etherType;
 }
 
+header arp_t {
+    bit<16> htype;
+    bit<16> ptype;
+    bit<8> hlen;
+    bit<8> plen;
+    bit<16> operation;
+    bit<48> sender_hardware_address;
+    bit<32> sender_protocol_address;
+    bit<48> target_hardware_address;
+    bit<32> target_protocol_address;
+}
+
 struct headers {
     ethernet_t ethernet;
+    arp_t arp;
 }
 
 struct metadata {}
+
+error { UnknownProtocol };
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -29,6 +44,25 @@ parser MyParser(packet_in packet,
                 inout standard_metadata_t standard_metadata) {
 
     state start {
+        packet.extract(hdr.ethernet);
+        transition select(hdr.ethernet.etherType) {
+            0x800: parse_ipv4;
+            0x806: parse_arp;
+            default: accept;
+        }
+    }
+
+    state parse_ipv4 {
+        log_msg("IPv4");
+        transition accept;
+    }
+
+    state parse_arp {
+        packet.extract(hdr.arp);
+        verify(hdr.arp.htype == 1, error.UnknownProtocol);
+        verify(hdr.arp.ptype == 0x800, error.UnknownProtocol);
+        verify(hdr.arp.hlen == 6, error.UnknownProtocol);
+        verify(hdr.arp.plen == 4, error.UnknownProtocol);
         transition accept;
     }
 
