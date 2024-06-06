@@ -7,7 +7,17 @@
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
 
-// Define the packet header formats here
+header ethernet_t {
+    bit<48> dstAddr;
+    bit<48> srcAddr;
+    bit<16> etherType;
+}
+
+struct headers {
+    ethernet_t ethernet;
+}
+
+struct metadata {}
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -19,11 +29,7 @@ parser MyParser(packet_in packet,
                 inout standard_metadata_t standard_metadata) {
 
     state start {
-        transition parse_ethernet;
-    }
-
-    state parse_ethernet {
-        // Your parser starts here
+        transition accept;
     }
 
 }

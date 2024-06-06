@@ -2,7 +2,8 @@
   "target": "bmv2",
   "p4info": "build/router.p4.p4info.txt",
   "bmv2_json": "build/router.json",
-  "table_entries": [
+  "table_entries": [],
+  "table_entries_template": [
     {
       "table": "MyIngress.YOUR_TABLE_NAME",
       "default_action": true,
