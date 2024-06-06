@@ -13,12 +13,123 @@
  See the License for the specific language governing permissions and
  limitations under the License.
  """
-from random import sample, choice
-from itertools import cycle, chain
+from concurrent.futures import ThreadPoolExecutor
+from itertools import chain
 from tqdm import tqdm
-from itertools import product
-import uuid
 from multiprocessing import Pool
+from ipaddress import IPv4Address
+import json
+import socketserver
+import threading
+
+from ryu.base import app_manager
+from ryu.controller import ofp_event
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import set_ev_cls
+from ryu.controller.controller import Datapath
+from ryu.ofproto import ofproto_v1_3
+
+
+class ReportingRouter(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+
+    def __init__(self, *args, **kwargs):
+        super(ReportingRouter, self).__init__(*args, **kwargs)
+        self.topo_net = Fattree(4)
+
+        self.data_collection_state = None
+        self.collection_done = threading.Event()
+        self.pre_port_data = dict()
+        self.post_port_data = dict()
+        self.missing_switches_for_data = list()
+
+        router = self
+
+        class DataRequestHandler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                text = self.request[0]
+                if text == b"Start":
+                    router.data_collection_state = "Start"
+                elif text == b"Stop":
+                    router.data_collection_state = "Stop"
+                else:
+                    return
+                
+                router.collection_done.clear()
+                router.missing_switches_for_data = list()
+                for switch in router.topo_net.switches:
+
+                    dp: Datapath = switch.datapath
+                    if dp is None:
+                        continue
+                    router.missing_switches_for_data.append(
+                        IPv4Address(dp.id))
+
+                    ofproto = dp.ofproto
+                    parser = dp.ofproto_parser
+
+                    # Send a request for stats
+                    dp.send_msg(parser.OFPPortStatsRequest(
+                        dp, 0, ofproto.OFPP_ANY))
+                
+                router.collection_done.wait()
+                self.request[1].sendto(b"Done", self.client_address)
+
+        def serve_data_requests():
+            with socketserver.UDPServer(("localhost", 4711), DataRequestHandler) as dataserver:
+                dataserver.serve_forever()
+
+        self.thread_pool = ThreadPoolExecutor()
+        self.thread_pool.submit(serve_data_requests)
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def handle_ports_stats_reply(self, ev):
+        dp: Datapath = ev.msg.datapath
+        ip = IPv4Address(dp.id)
+        self.missing_switches_for_data.remove(ip)
+
+        ip = str(ip)
+        data = {stat.port_no: stat.tx_bytes for stat in ev.msg.body}
+        if self.data_collection_state == "Start":
+            self.pre_port_data[ip] = data
+        else:
+            self.post_port_data[ip] = data
+
+        if len(self.missing_switches_for_data) == 0:
+            self.collection_done.set()
+            if self.data_collection_state == "Stop":
+                port_data = dict()
+                for ip in self.post_port_data.keys():
+                    port_data[ip] = dict()
+                    for port in self.post_port_data[ip].keys():
+                        port_data[ip][port] = self.post_port_data[ip][port] - self.pre_port_data[ip][port]
+                with open("sent_bytes.json", "w") as out_file:
+                    json.dump(port_data, out_file)
+
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Install entry-miss flow entry
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
+
+    # Add a flow entry to the flow-table
+
+    def add_flow(self, datapath, priority, match, actions):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        # Construct flow_mod message and send it
+        inst = [parser.OFPInstructionActions(
+            ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                match=match, instructions=inst)
+        datapath.send_msg(mod)
 
 
 class Edge:
@@ -28,13 +139,20 @@ class Edge:
 
     def __init__(self):
         self.lnode = None
+        self.lport = None
+
         self.rnode = None
+        self.rport = None
 
     def remove(self):
         self.lnode.edges.remove(self)
         self.rnode.edges.remove(self)
+
         self.lnode = None
+        self.lport = None
+
         self.rnode = None
+        self.rport = None
 
 
 class Node:
@@ -42,12 +160,14 @@ class Node:
     Class for a node in the graph
     """
 
-    def __init__(self, id, type):
+    def __init__(self, id, type, ip):
         self.edges = []
         self.visited = False
         self.__id__ = id
         self.__type__ = type
+        self.__ip__ = ip
         self.__node_hash__ = hash(self.label)
+        self.__datapath__ = None
 
     # Add an edge connected to another node
     def add_edge(self, node):
@@ -75,6 +195,18 @@ class Node:
     @property
     def type(self):
         return self.__type__
+
+    @property
+    def ip(self):
+        return self.__ip__
+
+    @property
+    def datapath(self):
+        return self.__datapath__
+
+    @datapath.setter
+    def datapath(self, datapath):
+        self.__datapath__ = datapath
 
     @property
     def label(self):
@@ -121,13 +253,19 @@ class Topology(object):
         edge_lines = []
         added_edges = set()
         for node in chain(self.servers, self.switches):
-            node_lines.append(f"\t{node.label};")
+            node_lines.append(
+                f"\t{node.label} [ip=\"{node.ip}\", dp=\"{node.datapath}\"];")
             for edge in node.edges:
                 if edge not in added_edges:
                     added_edges.add(edge)
                     edge_lines.append(
-                        f"\t{edge.lnode.label} -- {edge.rnode.label};")
+                        f"\t{edge.lnode.label} -- {edge.rnode.label} [lport={edge.lport}, rport={edge.rport}];")
         return "graph {\n" + "\n".join(node_lines) + "\n" + "\n".join(edge_lines) + "\n}"
+
+    def node_by_ip(self, ip: str) -> Node:
+        for node in chain(self.servers, self.switches):
+            if node.ip == ip:
+                return node
 
     def sanity_checks(self):
         # Server and Switch lists are clean
@@ -168,7 +306,7 @@ class Topology(object):
         """
         Run breadth-first search to find the shortest paths to all (other) servers.
         """
-        shortest_paths: dict[Node, tuple[int, list[Node]]] = {source: [source]}
+        shortest_paths: dict[Node, list[Node]] = {source: [source]}
         queue: list[Node] = [source]
 
         for node in chain(self.servers, self.switches):
@@ -283,70 +421,6 @@ class Topology(object):
         return paths
 
 
-class Jellyfish(Topology):
-    """
-    Implementation of the jellyfish topology
-    """
-
-    def __init__(self, num_servers, num_switches, num_ports):
-        super().__init__()
-        self.generate(num_servers, num_switches, num_ports)
-
-    def generate(self, num_servers, num_switches, num_ports):
-        assert num_ports > num_servers / num_switches, \
-            f"{num_ports} ports are not enough support {num_servers} servers with {num_switches} switches"
-
-        self.servers = [Node(i_server, "h")
-                        for i_server in range(0, num_servers)]
-        self.switches = [Node(i_switch, "s")
-                         for i_switch in range(0, num_switches)]
-
-        # Allocate servers to switches in a round-robin fashion
-        for server, switch in zip(self.servers, cycle(self.switches)):
-            server.add_edge(switch)
-
-        # Switches that still have free ports
-        free_switches = list(self.switches)
-        # Links that we made, later used for uniform sampling
-        made_links = list()
-
-        while len(free_switches) >= 2:
-            # Sample from all switch tuples
-            i_switch_a, i_switch_b = sample(range(0, len(free_switches)), 2)
-            switch_a, switch_b = free_switches[i_switch_a], free_switches[i_switch_b]
-
-            # Create the link
-            made_links.append(switch_a.add_edge(switch_b))
-
-            # Remove switches from list of free switches if fully occupied
-            if len(switch_a.edges) == num_ports:
-                del free_switches[i_switch_a]
-                if i_switch_b > i_switch_a:
-                    # Update the index of the second switch
-                    i_switch_b -= 1
-
-            if len(switch_b.edges) == num_ports:
-                del free_switches[i_switch_b]
-
-        if len(free_switches) == 1:
-            lonely_switch = free_switches[0]
-
-            # Include the lonely switch in the network until it has only one port left.
-            while num_ports - len(lonely_switch.edges) > 1:
-                i_link = choice(range(0, len(made_links)))
-
-                link_to_break = made_links[i_link]
-                lnode = link_to_break.lnode
-                rnode = link_to_break.rnode
-
-                lnode.remove_edge(link_to_break)
-                lnode.add_edge(lonely_switch)
-                lonely_switch.add_edge(rnode)
-
-                # Do not add the new link to the list! We don't want self-edges!
-                del made_links[i_link]
-
-
 class Fattree(Topology):
     """
     Implementation of the fat tree topology.
@@ -359,44 +433,47 @@ class Fattree(Topology):
     def generate(self, num_ports):
 
         num_ports_half = int(num_ports / 2)
+        self.switches = []
+        self.edges = []
 
         # Create core switches
-        self.switches = [Node(i, "s") for i in range(0, num_ports_half ** 2)]
+        for i in range(0, num_ports_half):
+            for j in range(0, num_ports_half):
+                self.switches.append(
+                    Node(len(self.switches), "s", IPv4Address(f"10.{num_ports}.{i+1}.{j+1}")))
 
         # Create pods
         for pod in range(0, num_ports):
 
             for i in range(0, num_ports_half):
                 # Create (k/2) edge switches
-                self.switches.append(Node(len(self.switches), "s"))
+                self.switches.append(
+                    Node(len(self.switches), "s", IPv4Address(f"10.{pod}.{i}.1")))
 
                 for j in range(0, num_ports_half):
                     # Add (k/2) servers per edge switch
-                    self.servers.append(Node(len(self.servers), "h"))
+                    self.servers.append(
+                        Node(len(self.servers), "h", IPv4Address(f"10.{pod}.{i}.{j+2}")))
 
                     # Add edge: edge - server
-                    self.switches[-1].add_edge(self.servers[-1])
+                    self.edges.append(
+                        self.switches[-1].add_edge(self.servers[-1]))
 
             for i in range(0, num_ports_half):
                 # Create (k/2) aggregation switches
-                self.switches.append(Node(len(self.switches), "s"))
+                self.switches.append(
+                    Node(len(self.switches), "s", IPv4Address(f"10.{pod}.{i+num_ports_half}.1")))
 
                 # Add edges (cartesian product): edge - aggregation
                 for edge_switch in self.switches[-num_ports_half - 1 - i: -1 - i]:
-                    edge_switch.add_edge(self.switches[-1])
+                    self.edges.append(edge_switch.add_edge(self.switches[-1]))
 
                 # Add edges: core - aggregation
                 for core_switch in self.switches[i * num_ports_half: (i + 1) * num_ports_half]:
-                    core_switch.add_edge(self.switches[-1])
+                    self.edges.append(core_switch.add_edge(self.switches[-1]))
 
 
 if __name__ == "__main__":
-    topo_jellyfish = Jellyfish(686, 245, 14)
-    topo_jellyfish.sanity_checks()
-    with open("jellyfish.dot", mode="w") as f:
-        f.write(topo_jellyfish.to_dot())
-
-    topo_fattree = Fattree(14)
+    topo_fattree = Fattree(4)
     topo_fattree.sanity_checks()
-    with open("fattree.dot", mode="w") as f:
-        f.write(topo_fattree.to_dot())
+    print(topo_fattree.to_dot())

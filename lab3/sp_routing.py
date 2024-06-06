@@ -16,65 +16,47 @@
 
 #!/usr/bin/env python3
 
-from ryu.base import app_manager
-from ryu.controller import mac_to_port
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
-from ryu.ofproto import ofproto_v1_3
-from ryu.lib.mac import haddr_to_bin
-from ryu.lib.packet import packet
-from ryu.lib.packet import ipv4
-from ryu.lib.packet import arp
+from ryu.lib.packet import *
 
-from ryu.topology import event, switches
-from ryu.topology.api import get_switch, get_link
-from ryu.app.wsgi import ControllerBase
+from ryu.topology import event
+from ryu.topology.api import get_link
 
+from ipaddress import IPv4Address
 import topo
 
-class SPRouter(app_manager.RyuApp):
 
-    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-
-    def __init__(self, *args, **kwargs):
-        super(SPRouter, self).__init__(*args, **kwargs)
-        self.topo_net = topo.Fattree(4)
-
+class SPRouter(topo.ReportingRouter):
 
     # Topology discovery
+
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
 
-        # Switches and links in the network
-        switches = get_switch(self, None)
-        links = get_link(self, None)
+        dp = ev.switch.dp
+        switch_ip = IPv4Address(dp.id)
+        switch = self.topo_net.node_by_ip(switch_ip)
+        switch.datapath = dp
 
+        for link in get_link(self, dp.id):
+            src_ip = IPv4Address(link.src.dpid)
+            dst_ip = IPv4Address(link.dst.dpid)
 
-    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
-    def switch_features_handler(self, ev):
-        datapath = ev.msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
+            other_ip = src_ip if dst_ip == switch_ip else dst_ip
+            edge = next(filter(lambda e: other_ip in [
+                        e.lnode.ip, e.rnode.ip], switch.edges))
 
-        # Install entry-miss flow entry
-        match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                          ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
+            if src_ip == edge.lnode.ip:
+                edge.lport = link.src.port_no
+                edge.rport = link.dst.port_no
+            else:
+                edge.lport = link.dst.port_no
+                edge.rport = link.src.port_no
 
-
-    # Add a flow entry to the flow-table
-    def add_flow(self, datapath, priority, match, actions):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        # Construct flow_mod message and send it
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
-                                match=match, instructions=inst)
-        datapath.send_msg(mod)
-
+        with open("topo.dot", "w") as topo_file:
+            topo_file.write(self.topo_net.to_dot())
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
@@ -84,4 +66,125 @@ class SPRouter(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        # TODO: handle new packets at the controller
+        switch_ip = IPv4Address(dpid)
+        switch_node = self.topo_net.node_by_ip(switch_ip)
+
+        # Packet header parsing
+        pkt = packet.Packet(msg.data)
+        arp_pkt: arp.arp = pkt.get_protocol(arp.arp)
+        ipv4_pkt: ipv4.ipv4 = pkt.get_protocol(ipv4.ipv4)
+
+        if arp_pkt is not None:
+            src_ip = IPv4Address(arp_pkt.src_ip)
+            dst_ip = IPv4Address(arp_pkt.dst_ip)
+        elif ipv4_pkt is not None:
+            src_ip = IPv4Address(ipv4_pkt.src)
+            dst_ip = IPv4Address(ipv4_pkt.dst)
+        else:
+            return  # Neither IP nor ARP, ignore packet
+
+        src_node = self.topo_net.node_by_ip(src_ip)
+        dst_node = self.topo_net.node_by_ip(dst_ip)
+
+        print(f"Packet in: {src_ip} -> {dst_ip}; Switch {switch_ip}")
+
+        # Computing the shortest path
+        path = self.topo_net.single_source_shortest_paths(
+            switch_node, dst_node)[dst_node]
+
+        # Forwarding the packet via the last switch on the path.
+        # We may not know the out-port to the host if it has not sent a packet yet.
+        # We therefore try to find out which ports the host won't be connected to.
+        # If we find that we know the out-port, we will send out the packet directly.
+        # Otherwise we send the packet to all ports where the host might be attached.
+        last_switch = path[-2]
+
+        out_ports = list(range(1, 5))
+        for edge in last_switch.edges:
+            if edge.lnode == last_switch:
+                edge_out_port = edge.lport
+                edge_dst = edge.rnode
+            else:
+                edge_out_port = edge.rport
+                edge_dst = edge.lnode
+
+            if edge_out_port is None:
+                continue
+
+            if edge_dst == dst_node:
+                # We know exactly where to send the packet to, short circuit
+                out_ports = [edge_out_port]
+                break
+            else:
+                # We know that this port goes to a switch/host we don't want to address.
+                # Remove this port
+                out_ports.remove(edge_out_port)
+
+        last_switch.datapath.send_msg(
+            parser.OFPPacketOut(
+                datapath=last_switch.datapath, buffer_id=ofproto.OFP_NO_BUFFER, in_port=ofproto.OFPP_CONTROLLER,
+                actions=[parser.OFPActionOutput(out_port)
+                         for out_port in out_ports],
+                data=msg.data
+            )
+        )
+
+        # Installing forwarding rules according to the shortest path
+        # We exclude the final edge switch, since it learns its forwarding rule via port learning.
+        for i_node in range(len(path)-2):
+            hop_src_node = path[i_node]
+            hop_dst_node = path[i_node+1]
+
+            hop_port = None
+
+            for edge in hop_src_node.edges:
+                if edge.lnode == hop_src_node:
+                    edge_dst_node = edge.rnode
+                    out_port = edge.lport
+                else:
+                    edge_dst_node = edge.lnode
+                    out_port = edge.rport
+
+                if edge_dst_node == hop_dst_node:
+                    hop_port = out_port
+                    break
+
+            if hop_port is not None:
+                # In case we don't know the out port yet, we don't install a rule
+                self.add_flow(
+                    hop_src_node.datapath,
+                    1,
+                    parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP, ipv4_src=str(
+                        src_ip), ipv4_dst=str(dst_ip)),
+                    [parser.OFPActionOutput(hop_port)]
+                )
+                self.add_flow(
+                    hop_src_node.datapath,
+                    1,
+                    parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP, arp_spa=str(
+                        src_ip), arp_tpa=str(dst_ip)),
+                    [parser.OFPActionOutput(hop_port)]
+                )
+
+        # Port learning for hosts
+        for edge in switch_node.edges:
+            if edge.lnode == switch_node and edge.rnode.ip == src_ip:
+                edge.lport = msg.match["in_port"]
+            elif edge.rnode == switch_node and edge.lnode.ip == src_ip:
+                edge.rport = msg.match["in_port"]
+
+        # Install host forwarding rule
+        self.add_flow(
+            switch_node.datapath,
+            1,
+            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_IP,
+                            ipv4_dst=str(src_ip)),
+            [parser.OFPActionOutput(msg.match["in_port"])]
+        )
+        self.add_flow(
+            switch_node.datapath,
+            1,
+            parser.OFPMatch(eth_type=ethernet.ether.ETH_TYPE_ARP,
+                            arp_tpa=str(src_ip)),
+            [parser.OFPActionOutput(msg.match["in_port"])]
+        )

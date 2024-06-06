@@ -16,9 +16,11 @@
 
 #!/usr/bin/env python3
 
-import os
-import subprocess
-import time
+from concurrent.futures import ThreadPoolExecutor
+import random
+import socket
+import re
+import json
 
 import mininet
 import mininet.clean
@@ -32,38 +34,69 @@ from mininet.util import waitListening, custom
 
 import topo
 
+
 class FattreeNet(Topo):
-	"""
-	Create a fat-tree network in Mininet
-	"""
+    """
+    Create a fat-tree network in Mininet
+    """
 
-	def __init__(self, ft_topo):
-		
-		Topo.__init__(self)
+    def __init__(self, ft_topo):
+        Topo.__init__(self)
 
-		# TODO: please complete the network generation logic here
+        # Create a node for each switch/server
+        nodes = dict()
+        for device in ft_topo.switches:
+            nodes[device.label] = self.addSwitch(
+                device.label, dpid=hex(int(device.ip))[2:])
+        for device in ft_topo.servers:
+            nodes[device.label] = self.addHost(
+                device.label, ip=str(device.ip), prefixLen=8)
+
+        # Create a link for each edge
+        for edge in ft_topo.edges:
+            self.addLink(nodes[edge.lnode.label],
+                         nodes[edge.rnode.label], bw=15, delay='5ms')
 
 
 def make_mininet_instance(graph_topo):
 
-	net_topo = FattreeNet(graph_topo)
-	net = Mininet(topo=net_topo, controller=None, autoSetMacs=True)
-	net.addController('c0', controller=RemoteController, ip="127.0.0.1", port=6653)
-	return net
+    net_topo = FattreeNet(graph_topo)
+    net = Mininet(topo=net_topo, controller=None, autoSetMacs=True,
+                  switch=OVSKernelSwitch, link=TCLink)
+    net.addController('c0', controller=RemoteController,
+                      ip="127.0.0.1", port=6653)
+    return net
+
 
 def run(graph_topo):
-	
-	# Run the Mininet CLI with a given topology
-	lg.setLogLevel('info')
-	mininet.clean.cleanup()
-	net = make_mininet_instance(graph_topo)
 
-	info('*** Starting network ***\n')
-	net.start()
-	info('*** Running CLI ***\n')
-	CLI(net)
-	info('*** Stopping network ***\n')
-	net.stop()
+    # Run the Mininet CLI with a given topology
+    lg.setLogLevel('info')
+    mininet.clean.cleanup()
+    net = make_mininet_instance(graph_topo)
+    controller_data_server = socket.socket(
+        socket.AddressFamily.AF_INET, socket.SocketKind.SOCK_DGRAM)
+
+    info('*** Starting network ***\n')
+    net.start()
+    net.pingAll()
+
+    pairs = [("h0", "h8"), ("h2", "h10"), ("h4", "h12"), ("h6", "h14")]
+    pairs = [(net.get(a_node), net.get(b_node)) for (a_node, b_node) in pairs]
+
+    info('*** Running Benchmark ***\n')
+
+    controller_data_server.sendto(b"Start", ("localhost", 4711))
+    assert controller_data_server.recv(4) == b"Done"
+
+    with ThreadPoolExecutor(max_workers=len(graph_topo.switches)) as executor:
+        executor.map(lambda pair: net.iperf(hosts=pair, seconds=30), pairs)
+
+    controller_data_server.sendto(b"Stop", ("localhost", 4711))
+    assert controller_data_server.recv(4) == b"Done"
+
+    info('*** Stopping network ***\n')
+    net.stop()
 
 
 if __name__ == '__main__':

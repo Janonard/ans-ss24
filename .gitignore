@@ -1,0 +1,6 @@
+.vagrant/
+.venv
+**/__pycache__
+*.dot
+*.png
+*.pdf

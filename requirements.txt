@@ -1,0 +1,7 @@
+mininet
+eventlet==0.30.2
+networkx
+matplotlib
+tqdm
+pydot
+ipykernel
