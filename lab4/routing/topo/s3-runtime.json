@@ -2,7 +2,21 @@
   "target": "bmv2",
   "p4info": "build/router.p4.p4info.txt",
   "bmv2_json": "build/router.json",
-  "table_entries": [],
+  
+  "table_entries": [
+    {
+      "table": "MyIngress.handle_arp",
+      "match": {
+        "hdr.arp.target_protocol_address": "10.0.3.30",
+        "hdr.arp.operation": 1
+      },
+      "action_name": "MyIngress.respond_arp_request",
+      "action_params": {
+        "router_mac": "08:00:00:00:03:00",
+        "router_ip": "10.0.3.30"
+      }
+    }
+  ],
   "table_entries_template": [
     {
       "table": "MyIngress.YOUR_TABLE_NAME",

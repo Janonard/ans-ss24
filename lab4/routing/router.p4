@@ -2,14 +2,17 @@
 #include <core.p4>
 #include <v1model.p4>
 
+typedef bit<48> macAddr_t;
+typedef bit<32> ip4Addr_t;
+
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
 
 header ethernet_t {
-    bit<48> dstAddr;
-    bit<48> srcAddr;
+    macAddr_t dstAddr;
+    macAddr_t srcAddr;
     bit<16> etherType;
 }
 
@@ -19,10 +22,10 @@ header arp_t {
     bit<8> hlen;
     bit<8> plen;
     bit<16> operation;
-    bit<48> sender_hardware_address;
-    bit<32> sender_protocol_address;
-    bit<48> target_hardware_address;
-    bit<32> target_protocol_address;
+    macAddr_t sender_hardware_address;
+    ip4Addr_t sender_protocol_address;
+    macAddr_t target_hardware_address;
+    ip4Addr_t target_protocol_address;
 }
 
 struct headers {
@@ -89,21 +92,32 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
-    action respond_arp_request() {
+    action respond_arp_request(macAddr_t router_mac, ip4Addr_t router_ip) {
         hdr.arp.target_hardware_address = hdr.arp.sender_hardware_address;
         hdr.arp.target_protocol_address = hdr.arp.sender_protocol_address;
-        hdr.arp.sender_hardware_address = 0x080000000100;
-        hdr.arp.sender_protocol_address = 167772426;
+        hdr.arp.sender_hardware_address = router_mac;
+        hdr.arp.sender_protocol_address = router_ip;
         hdr.arp.operation = 2; // RESPONSE
         
         standard_metadata.egress_spec = standard_metadata.ingress_port;
     }
 
     // Define your own table(s) here
+    table handle_arp {
+        key = {
+            hdr.arp.target_protocol_address: exact;
+            hdr.arp.operation: exact;
+        }
+        actions = {
+            respond_arp_request;
+            drop;
+        }
+        default_action = drop();
+    }
 
     apply {
         if (hdr.arp.isValid()) {
-            respond_arp_request();
+            handle_arp.apply();
         }
     }
 }
