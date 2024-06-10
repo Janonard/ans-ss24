@@ -28,9 +28,26 @@ header arp_t {
     ip4Addr_t target_protocol_address;
 }
 
+header ipv4_t {
+    bit<4> version;
+    bit<4> ihl;
+    bit<6> dscp;
+    bit<2> ecn;
+    bit<16> len;
+    bit<16> ident;
+    bit<2> flags;
+    bit<14> fragment_offset;
+    bit<8> time_to_live;
+    bit<8> protocol;
+    bit<16> checksum;
+    ip4Addr_t source_address;
+    ip4Addr_t target_address;
+}
+
 struct headers {
     ethernet_t ethernet;
     arp_t arp;
+    ipv4_t ipv4;
 }
 
 struct metadata {}
@@ -56,7 +73,8 @@ parser MyParser(packet_in packet,
     }
 
     state parse_ipv4 {
-        log_msg("IPv4");
+        packet.extract(hdr.ipv4);
+        verify(hdr.ipv4.version == 4, error.UnknownProtocol);
         transition accept;
     }
 
@@ -66,7 +84,6 @@ parser MyParser(packet_in packet,
         verify(hdr.arp.ptype == 0x800, error.UnknownProtocol);
         verify(hdr.arp.hlen == 6, error.UnknownProtocol);
         verify(hdr.arp.plen == 4, error.UnknownProtocol);
-        log_msg("ARP package {} -> {}", {hdr.arp.sender_protocol_address, hdr.arp.target_protocol_address});
         transition accept;
     }
 
@@ -102,7 +119,6 @@ control MyIngress(inout headers hdr,
         standard_metadata.egress_spec = standard_metadata.ingress_port;
     }
 
-    // Define your own table(s) here
     table handle_arp {
         key = {
             hdr.arp.target_protocol_address: exact;
@@ -115,9 +131,33 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
+    action forward_ip_packet(bit<9> out_port, macAddr_t src_mac, macAddr_t dst_mac) {
+        hdr.ethernet.dstAddr = dst_mac;
+        hdr.ethernet.srcAddr = src_mac;
+        hdr.ipv4.time_to_live = hdr.ipv4.time_to_live - 1;
+        standard_metadata.egress_spec = out_port;
+    }
+
+    table handle_ipv4 {
+        key = {
+            hdr.ipv4.target_address: lpm;
+        }
+        actions = {
+            forward_ip_packet;
+            drop;
+        }
+        default_action = drop();
+    }
+
     apply {
         if (hdr.arp.isValid()) {
             handle_arp.apply();
+        } else if (hdr.ipv4.isValid()) {
+            if (hdr.ipv4.time_to_live > 1) {
+                handle_ipv4.apply();
+            } else {
+                drop();
+            }
         }
     }
 }
@@ -138,6 +178,25 @@ control MyEgress(inout headers hdr,
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
     apply {
+        update_checksum(
+            hdr.ipv4.isValid(),
+            {
+                hdr.ipv4.version,
+                hdr.ipv4.ihl,
+                hdr.ipv4.dscp,
+                hdr.ipv4.ecn,
+                hdr.ipv4.len,
+                hdr.ipv4.ident,
+                hdr.ipv4.flags,
+                hdr.ipv4.fragment_offset,
+                hdr.ipv4.time_to_live,
+                hdr.ipv4.protocol,
+                hdr.ipv4.source_address,
+                hdr.ipv4.target_address
+            },
+            hdr.ipv4.checksum,
+            HashAlgorithm.csum16
+        );
     }
 }
 
@@ -149,6 +208,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.arp);
+        packet.emit(hdr.ipv4);
     }
 }
 

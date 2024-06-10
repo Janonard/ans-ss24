@@ -99,7 +99,7 @@ def encode(x, bitwidth):
         encoded_bytes = encodeNum(x, bitwidth)
     else:
         raise Exception("Encoding objects of %r is not supported" % type(x))
-    assert(len(encoded_bytes) == byte_len)
+    assert(len(encoded_bytes) == byte_len, encoded_bytes)
     return encoded_bytes
 
 if __name__ == '__main__':

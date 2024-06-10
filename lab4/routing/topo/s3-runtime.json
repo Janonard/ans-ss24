@@ -15,6 +15,30 @@
         "router_mac": "08:00:00:00:03:00",
         "router_ip": "10.0.3.30"
       }
+    },
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.3.3", 32]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 1,
+        "src_mac": "08:00:00:00:03:00",
+        "dst_mac": "08:00:00:00:03:33"
+      }
+    },
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.1.0", 24]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 2,
+        "src_mac": "08:00:00:00:03:00",
+        "dst_mac": "08:00:00:00:01:00"
+      }
     }
   ],
   "table_entries_template": [
