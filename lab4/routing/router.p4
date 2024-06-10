@@ -50,7 +50,9 @@ struct headers {
     ipv4_t ipv4;
 }
 
-struct metadata {}
+struct metadata {
+    bit<1> from_own_subnet;
+}
 
 error { UnknownProtocol };
 
@@ -131,6 +133,20 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
+    action set_from_own_subnet_flag(bit<1> value) {
+        meta.from_own_subnet = value;
+    }
+
+    table check_subnet {
+        key = {
+            hdr.ipv4.source_address: lpm;
+        }
+        actions = {
+            set_from_own_subnet_flag;
+        }
+        default_action = set_from_own_subnet_flag(0);
+    }
+
     action forward_ip_packet(bit<9> out_port, macAddr_t src_mac, macAddr_t dst_mac) {
         hdr.ethernet.dstAddr = dst_mac;
         hdr.ethernet.srcAddr = src_mac;
@@ -140,6 +156,7 @@ control MyIngress(inout headers hdr,
 
     table handle_ipv4 {
         key = {
+            meta.from_own_subnet: exact;
             hdr.ipv4.target_address: lpm;
         }
         actions = {
@@ -154,6 +171,7 @@ control MyIngress(inout headers hdr,
             handle_arp.apply();
         } else if (hdr.ipv4.isValid()) {
             if (hdr.ipv4.time_to_live > 1) {
+                check_subnet.apply();
                 handle_ipv4.apply();
             } else {
                 drop();

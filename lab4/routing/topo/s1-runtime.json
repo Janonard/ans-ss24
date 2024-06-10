@@ -16,8 +16,22 @@
       }
     },
     {
+      "table": "MyIngress.check_subnet",
+      "match": {
+        "hdr.ipv4.source_address": ["10.0.1.0", 24]
+      },
+      "action_name": "MyIngress.set_from_own_subnet_flag",
+      "action_params": {
+        "value": 1
+      }
+    },
+
+
+
+    {
       "table": "MyIngress.handle_ipv4",
       "match": {
+        "meta.from_own_subnet": 0,
         "hdr.ipv4.target_address": ["10.0.1.1", 32]
       },
       "action_name": "MyIngress.forward_ip_packet",
@@ -27,9 +41,26 @@
         "dst_mac": "08:00:00:00:01:11"
       }
     },
+
+
+
     {
       "table": "MyIngress.handle_ipv4",
       "match": {
+        "meta.from_own_subnet": 1,
+        "hdr.ipv4.target_address": ["10.0.3.0", 24]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 2,
+        "src_mac": "08:00:00:00:01:00",
+        "dst_mac": "08:00:00:00:02:00"
+      }
+    },
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "meta.from_own_subnet": 0,
         "hdr.ipv4.target_address": ["10.0.3.0", 24]
       },
       "action_name": "MyIngress.forward_ip_packet",
@@ -37,6 +68,35 @@
         "out_port": 3,
         "src_mac": "08:00:00:00:01:00",
         "dst_mac": "08:00:00:00:03:00"
+      }
+    },
+
+
+    
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "meta.from_own_subnet": 1,
+        "hdr.ipv4.target_address": ["10.0.2.0", 24]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 3,
+        "src_mac": "08:00:00:00:01:00",
+        "dst_mac": "08:00:00:00:03:00"
+      }
+    },
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "meta.from_own_subnet": 0,
+        "hdr.ipv4.target_address": ["10.0.2.0", 24]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 2,
+        "src_mac": "08:00:00:00:01:00",
+        "dst_mac": "08:00:00:00:02:00"
       }
     }
   ]
