@@ -63,6 +63,7 @@ parser MyParser(packet_in packet,
         verify(hdr.arp.ptype == 0x800, error.UnknownProtocol);
         verify(hdr.arp.hlen == 6, error.UnknownProtocol);
         verify(hdr.arp.plen == 4, error.UnknownProtocol);
+        log_msg("ARP package {} -> {}", {hdr.arp.sender_protocol_address, hdr.arp.target_protocol_address});
         transition accept;
     }
 
@@ -88,10 +89,22 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
+    action respond_arp_request() {
+        hdr.arp.target_hardware_address = hdr.arp.sender_hardware_address;
+        hdr.arp.target_protocol_address = hdr.arp.sender_protocol_address;
+        hdr.arp.sender_hardware_address = 0x080000000100;
+        hdr.arp.sender_protocol_address = 167772426;
+        hdr.arp.operation = 2; // RESPONSE
+        
+        standard_metadata.egress_spec = standard_metadata.ingress_port;
+    }
+
     // Define your own table(s) here
 
     apply {
-        // Apply your own table(s) here
+        if (hdr.arp.isValid()) {
+            respond_arp_request();
+        }
     }
 }
 
@@ -110,8 +123,7 @@ control MyEgress(inout headers hdr,
 *************************************************************************/
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
-     apply {
-        // Update checksum
+    apply {
     }
 }
 
@@ -121,7 +133,8 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
-        // Define your deparser here
+        packet.emit(hdr.ethernet);
+        packet.emit(hdr.arp);
     }
 }
 
