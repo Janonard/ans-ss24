@@ -96,7 +96,27 @@ parser MyParser(packet_in packet,
 *************************************************************************/
 
 control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
-    apply {  }
+    apply { 
+        verify_checksum(
+            hdr.ipv4.isValid(),
+            {
+                hdr.ipv4.version,
+                hdr.ipv4.ihl,
+                hdr.ipv4.dscp,
+                hdr.ipv4.ecn,
+                hdr.ipv4.len,
+                hdr.ipv4.ident,
+                hdr.ipv4.flags,
+                hdr.ipv4.fragment_offset,
+                hdr.ipv4.time_to_live,
+                hdr.ipv4.protocol,
+                hdr.ipv4.source_address,
+                hdr.ipv4.target_address
+            },
+            hdr.ipv4.checksum,
+            HashAlgorithm.csum16
+        );
+    }
 }
 
 
