@@ -44,18 +44,10 @@ header ipv4_t {
     ip4Addr_t target_address;
 }
 
-header udp_t {
-    bit<16> source_port;
-    bit<16> dest_port;
-    bit<16> len;
-    bit<16> checksum;
-}
-
 struct headers {
     ethernet_t ethernet;
     arp_t arp;
     ipv4_t ipv4;
-    udp_t udp;
 }
 
 struct metadata {
@@ -85,10 +77,7 @@ parser MyParser(packet_in packet,
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
         verify(hdr.ipv4.version == 4, error.UnknownProtocol);
-        transition select(hdr.ipv4.protocol) {
-            17: parse_udp;
-            default: accept;
-        }
+        transition accept;
     }
 
     state parse_arp {
@@ -97,11 +86,6 @@ parser MyParser(packet_in packet,
         verify(hdr.arp.ptype == 0x800, error.UnknownProtocol);
         verify(hdr.arp.hlen == 6, error.UnknownProtocol);
         verify(hdr.arp.plen == 4, error.UnknownProtocol);
-        transition accept;
-    }
-
-    state parse_udp {
-        packet.extract(hdr.udp);
         transition accept;
     }
 
@@ -248,7 +232,6 @@ control MyDeparser(packet_out packet, in headers hdr) {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.arp);
         packet.emit(hdr.ipv4);
-        packet.emit(hdr.udp);
     }
 }
 
