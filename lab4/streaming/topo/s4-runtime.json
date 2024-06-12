@@ -2,5 +2,31 @@
   "target": "bmv2",
   "p4info": "build/streaming.p4.p4info.txt",
   "bmv2_json": "build/streaming.json",
-  "table_entries": []
+  "table_entries": [
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.1.1", 32]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 1,
+        "src_mac": "08:00:00:00:04:00",
+        "dst_mac": "08:00:00:00:01:00"
+      }
+    },
+
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.3.3", 32]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 2,
+        "src_mac": "08:00:00:00:04:00",
+        "dst_mac": "08:00:00:00:03:00"
+      }
+    }
+  ]
 }

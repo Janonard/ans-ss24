@@ -2,5 +2,57 @@
   "target": "bmv2",
   "p4info": "build/streaming.p4.p4info.txt",
   "bmv2_json": "build/streaming.json",
-  "table_entries": []
+  "table_entries": [
+    {
+      "table": "MyIngress.handle_arp",
+      "match": {
+        "hdr.arp.target_protocol_address": "10.0.7.70",
+        "hdr.arp.operation": 1
+      },
+      "action_name": "MyIngress.respond_arp_request",
+      "action_params": {
+        "router_mac": "08:00:00:00:07:00",
+        "router_ip": "10.0.7.70"
+      }
+    },
+
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.1.1", 32]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 2,
+        "src_mac": "08:00:00:00:07:00",
+        "dst_mac": "08:00:00:00:05:00"
+      }
+    },
+
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.7.7", 32]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 1,
+        "src_mac": "08:00:00:00:07:00",
+        "dst_mac": "08:00:00:00:07:77"
+      }
+    },
+
+    {
+      "table": "MyIngress.handle_ipv4",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.3.3", 32]
+      },
+      "action_name": "MyIngress.forward_ip_packet",
+      "action_params": {
+        "out_port": 2,
+        "src_mac": "08:00:00:00:07:00",
+        "dst_mac": "08:00:00:00:05:00"
+      }
+    }
+  ]
 }
