@@ -172,11 +172,32 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
+    action start_intercept() {
+        log_msg("wuhuuu");
+    }
+
+    action nop() {
+
+    }
+
+    table decide_intercept {
+        key = {
+            hdr.ipv4.source_address: exact;
+            hdr.ipv4.target_address: exact;
+        }
+        actions = {
+            start_intercept;
+            nop;
+        }
+        default_action = nop();
+    }
+
     apply {
         if (hdr.arp.isValid()) {
             handle_arp.apply();
         } else if (hdr.ipv4.isValid()) {
             if (hdr.ipv4.time_to_live > 1) {
+                decide_intercept.apply();
                 handle_ipv4.apply();
             } else {
                 drop();

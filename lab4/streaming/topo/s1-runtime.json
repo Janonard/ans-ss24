@@ -53,6 +53,16 @@
         "src_mac": "08:00:00:00:01:00",
         "dst_mac": "08:00:00:00:04:00"
       }
+    },
+
+    {
+      "table": "MyIngress.decide_intercept",
+      "match": {
+        "hdr.ipv4.source_address": "10.0.1.1",
+        "hdr.ipv4.target_address": "10.0.7.7"
+      },
+      "action_name": "MyIngress.start_intercept",
+      "action_params": {}
     }
 
   ]
