@@ -24,7 +24,8 @@
     },
     "switches": {
         "s1": {
-            "runtime_json": "topo/s1-runtime.json"
+            "runtime_json": "topo/s1-runtime.json",
+            "cli_input": "topo/mirroring.txt"
         },
         "s2": {
             "runtime_json": "topo/s2-runtime.json"

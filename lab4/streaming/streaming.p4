@@ -127,6 +127,7 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
+
     action drop() {
         mark_to_drop(standard_metadata);
     }
@@ -153,7 +154,6 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
-
     action forward_ip_packet(bit<9> out_port, macAddr_t src_mac, macAddr_t dst_mac) {
         hdr.ethernet.dstAddr = dst_mac;
         hdr.ethernet.srcAddr = src_mac;
@@ -173,12 +173,10 @@ control MyIngress(inout headers hdr,
     }
 
     action start_intercept() {
-        log_msg("wuhuuu");
+        clone(CloneType.I2E, 2);
     }
 
-    action nop() {
-
-    }
+    action nop() { }
 
     table decide_intercept {
         key = {
@@ -213,7 +211,14 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-    apply {  }
+
+    apply { 
+        // instance type is cloned packet
+        if (standard_metadata.instance_type == 1) {
+            hdr.ipv4.target_address = 0x0a000303; // 10.0.3.3
+            hdr.ipv4.source_address = 0x0a000303; // 10.0.3.3
+        }
+     }
 }
 
 /*************************************************************************
