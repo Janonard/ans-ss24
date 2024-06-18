@@ -17,41 +17,83 @@
     },
 
     {
-      "table": "MyIngress.handle_ipv4",
+      "table": "MyIngress.forwarding",
       "match": {
-        "hdr.ipv4.target_address": ["10.0.1.1", 32]
+        "hdr.ipv4.target_address": ["10.0.1.0", 24]
       },
-      "action_name": "MyIngress.forward_ip_packet",
+      "action_name": "MyIngress.set_out_port",
       "action_params": {
-        "out_port": 2,
-        "src_mac": "08:00:00:00:03:00",
-        "dst_mac": "08:00:00:00:04:00"
+        "out_port": 2
       }
     },
 
     {
-      "table": "MyIngress.handle_ipv4",
+      "table": "MyIngress.forwarding",
       "match": {
         "hdr.ipv4.target_address": ["10.0.3.3", 32]
       },
-      "action_name": "MyIngress.forward_ip_packet",
+      "action_name": "MyIngress.set_out_port",
       "action_params": {
-        "out_port": 1,
+        "out_port": 1
+      }
+    },
+
+    {
+      "table": "MyIngress.forwarding",
+      "match": {
+        "hdr.ipv4.target_address": ["10.0.7.0", 24]
+      },
+      "action_name": "MyIngress.set_out_port",
+      "action_params": {
+        "out_port": 3
+      }
+    },
+
+    {
+      "table": "MyEgress.update_ethernet",
+      "match": {
+        "standard_metadata.egress_port": 1
+      },
+      "action_name": "MyEgress.do_ethernet_update",
+      "action_params": {
         "src_mac": "08:00:00:00:03:00",
         "dst_mac": "08:00:00:00:03:33"
       }
     },
 
     {
-      "table": "MyIngress.handle_ipv4",
+      "table": "MyEgress.update_ethernet",
       "match": {
-        "hdr.ipv4.target_address": ["10.0.7.7", 32]
+        "standard_metadata.egress_port": 2
       },
-      "action_name": "MyIngress.forward_ip_packet",
+      "action_name": "MyEgress.do_ethernet_update",
       "action_params": {
-        "out_port": 3,
+        "src_mac": "08:00:00:00:03:00",
+        "dst_mac": "08:00:00:00:04:00"
+      }
+    },
+
+    {
+      "table": "MyEgress.update_ethernet",
+      "match": {
+        "standard_metadata.egress_port": 3
+      },
+      "action_name": "MyEgress.do_ethernet_update",
+      "action_params": {
         "src_mac": "08:00:00:00:03:00",
         "dst_mac": "08:00:00:00:02:00"
+      }
+    },
+
+    {
+      "table": "MyEgress.update_ethernet",
+      "match": {
+        "standard_metadata.egress_port": 4
+      },
+      "action_name": "MyEgress.do_ethernet_update",
+      "action_params": {
+        "src_mac": "08:00:00:00:03:00",
+        "dst_mac": "08:00:00:00:05:00"
       }
     }
   ]

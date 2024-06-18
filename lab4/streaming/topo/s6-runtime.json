@@ -2,5 +2,29 @@
   "target": "bmv2",
   "p4info": "build/streaming.p4.p4info.txt",
   "bmv2_json": "build/streaming.json",
-  "table_entries": []
+  "table_entries": [
+    {
+      "table": "MyEgress.update_ethernet",
+      "match": {
+        "standard_metadata.egress_port": 1
+      },
+      "action_name": "MyEgress.do_ethernet_update",
+      "action_params": {
+        "src_mac": "08:00:00:00:06:00",
+        "dst_mac": "08:00:00:00:04:00"
+      }
+    },
+
+    {
+      "table": "MyEgress.update_ethernet",
+      "match": {
+        "standard_metadata.egress_port": 2
+      },
+      "action_name": "MyEgress.do_ethernet_update",
+      "action_params": {
+        "src_mac": "08:00:00:00:06:00",
+        "dst_mac": "08:00:00:00:07:00"
+      }
+    }
+  ]
 }

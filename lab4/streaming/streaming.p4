@@ -170,19 +170,16 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
-    action forward_ip_packet(bit<9> out_port, macAddr_t src_mac, macAddr_t dst_mac) {
-        hdr.ethernet.dstAddr = dst_mac;
-        hdr.ethernet.srcAddr = src_mac;
-        hdr.ipv4.time_to_live = hdr.ipv4.time_to_live - 1;
+    action set_out_port(bit<9> out_port) {
         standard_metadata.egress_spec = out_port;
     }
 
-    table handle_ipv4 {
+    table forwarding {
         key = {
             hdr.ipv4.target_address: lpm;
         }
         actions = {
-            forward_ip_packet;
+            set_out_port;
             drop;
         }
         default_action = drop();
@@ -192,8 +189,6 @@ control MyIngress(inout headers hdr,
         clone(CloneType.I2E, 2);
     }
 
-    action nop() { }
-
     table decide_intercept {
         key = {
             hdr.ipv4.source_address: exact;
@@ -201,9 +196,9 @@ control MyIngress(inout headers hdr,
         }
         actions = {
             start_intercept;
-            nop;
+            NoAction;
         }
-        default_action = nop();
+        default_action = NoAction;
     }
 
     apply {
@@ -212,7 +207,7 @@ control MyIngress(inout headers hdr,
         } else if (hdr.ipv4.isValid()) {
             if (hdr.ipv4.time_to_live > 1) {
                 decide_intercept.apply();
-                handle_ipv4.apply();
+                forwarding.apply();
             } else {
                 drop();
             }
@@ -228,12 +223,32 @@ control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
 
+    action do_ethernet_update(macAddr_t src_mac, macAddr_t dst_mac) {
+        hdr.ethernet.srcAddr = src_mac;
+        hdr.ethernet.dstAddr = dst_mac;
+    }
+
+    table update_ethernet {
+        key = {
+            standard_metadata.egress_port: exact;
+        }
+        actions = {
+            do_ethernet_update;
+            NoAction;
+        }
+        default_action = NoAction;
+    }
+
     apply { 
         // instance type is cloned packet
         if (standard_metadata.instance_type == 1) {
             hdr.ipv4.target_address = 0x0a000303; // 10.0.3.3
         }
-     }
+        if (hdr.ipv4.isValid()) {
+            hdr.ipv4.time_to_live = hdr.ipv4.time_to_live - 1;
+        }
+        update_ethernet.apply();
+    }
 }
 
 /*************************************************************************
