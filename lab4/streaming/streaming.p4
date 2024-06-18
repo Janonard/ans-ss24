@@ -44,10 +44,18 @@ header ipv4_t {
     ip4Addr_t target_address;
 }
 
+header udp_t {
+    bit<16> source_port;
+    bit<16> target_port;
+    bit<16> len;
+    bit<16> checksum;
+}
+
 struct headers {
     ethernet_t ethernet;
     arp_t arp;
     ipv4_t ipv4;
+    udp_t udp;
 }
 
 struct metadata {
@@ -77,7 +85,10 @@ parser MyParser(packet_in packet,
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
         verify(hdr.ipv4.version == 4, error.UnknownProtocol);
-        transition accept;
+        transition select(hdr.ipv4.protocol) {
+            17: parse_udp;
+            default: accept;
+        }
     }
 
     state parse_arp {
@@ -86,6 +97,11 @@ parser MyParser(packet_in packet,
         verify(hdr.arp.ptype == 0x800, error.UnknownProtocol);
         verify(hdr.arp.hlen == 6, error.UnknownProtocol);
         verify(hdr.arp.plen == 4, error.UnknownProtocol);
+        transition accept;
+    }
+
+    state parse_udp {
+        packet.extract(hdr.udp);
         transition accept;
     }
 
@@ -216,7 +232,6 @@ control MyEgress(inout headers hdr,
         // instance type is cloned packet
         if (standard_metadata.instance_type == 1) {
             hdr.ipv4.target_address = 0x0a000303; // 10.0.3.3
-            hdr.ipv4.source_address = 0x0a000303; // 10.0.3.3
         }
      }
 }
@@ -246,6 +261,14 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
             hdr.ipv4.checksum,
             HashAlgorithm.csum16
         );
+        update_checksum(
+            hdr.udp.isValid(),
+            {
+                16w0
+            },
+            hdr.udp.checksum,
+            HashAlgorithm.identity
+        );
     }
 }
 
@@ -258,6 +281,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.arp);
         packet.emit(hdr.ipv4);
+        packet.emit(hdr.udp);
     }
 }
 
