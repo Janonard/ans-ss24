@@ -4,6 +4,7 @@
 
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
+typedef bit<9> portspec_t;
 
 
 /*************************************************************************
@@ -170,7 +171,7 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
-    action set_out_port(bit<9> out_port) {
+    action set_out_port(portspec_t out_port) {
         standard_metadata.egress_spec = out_port;
     }
 
@@ -185,8 +186,8 @@ control MyIngress(inout headers hdr,
         default_action = drop();
     }
 
-    action start_intercept() {
-        clone(CloneType.I2E, 2);
+    action start_intercept(bit<16> mcast_grp) {
+        standard_metadata.mcast_grp = mcast_grp;
     }
 
     table decide_intercept {
@@ -239,12 +240,25 @@ control MyEgress(inout headers hdr,
         default_action = NoAction;
     }
 
-    apply { 
-        // instance type is cloned packet
-        if (standard_metadata.instance_type == 1) {
-            hdr.ipv4.target_address = 0x0a000303; // 10.0.3.3
+    action rewrite_target_ip(ip4Addr_t new_target) {
+        hdr.ipv4.target_address = new_target;
+    }
+
+    table mcast_target_rewrite {
+        key = {
+            standard_metadata.mcast_grp: exact;
+            standard_metadata.egress_rid: exact;
         }
+        actions = {
+            rewrite_target_ip;
+            NoAction;
+        }
+        default_action = NoAction;
+    }
+
+    apply {
         if (hdr.ipv4.isValid()) {
+            mcast_target_rewrite.apply();
             hdr.ipv4.time_to_live = hdr.ipv4.time_to_live - 1;
         }
         update_ethernet.apply();

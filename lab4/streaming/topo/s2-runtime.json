@@ -3,6 +3,7 @@
   "p4info": "build/streaming.p4.p4info.txt",
   "bmv2_json": "build/streaming.json",
   "table_entries": [
+
     {
       "table": "MyIngress.forwarding",
       "match": {
@@ -35,6 +36,31 @@
         "out_port": 3
       }
     },
+
+    {
+      "table": "MyIngress.decide_intercept",
+      "match": {
+        "hdr.ipv4.source_address": "10.0.1.1",
+        "hdr.ipv4.target_address": "10.0.7.7"
+      },
+      "action_name": "MyIngress.start_intercept",
+      "action_params": {
+        "mcast_grp": 1
+      }
+    },
+
+    {
+      "table": "MyEgress.mcast_target_rewrite",
+      "match": {
+        "standard_metadata.mcast_grp": 1,
+        "standard_metadata.egress_rid": 2
+      },
+      "action_name": "MyEgress.rewrite_target_ip",
+      "action_params": {
+        "new_target": "10.0.3.3"
+      }
+    },
+
     {
       "table": "MyEgress.update_ethernet",
       "match": {
@@ -69,6 +95,21 @@
         "src_mac": "08:00:00:00:02:00",
         "dst_mac": "08:00:00:00:03:00"
       }
+    }
+  ],
+  "multicast_group_entries": [
+    {
+      "multicast_group_id": 1,
+      "replicas": [
+        {
+          "egress_port": 2,
+          "instance": 1
+        },
+        {
+          "egress_port": 3,
+          "instance": 2
+        }
+      ]
     }
   ]
 }
