@@ -27,7 +27,7 @@ header ethernet_t {
 }
 
 header sml_t {
-  /* TODO: Define me */
+  bit<512> data;
 }
 
 struct headers {
@@ -41,11 +41,23 @@ parser TheParser(packet_in packet,
                  out headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-  /* TODO: Implement me */
   state start {
     packet.extract(hdr.eth);
-    log_msg("Packet: {} {}", {hdr.eth.srcAddr, hdr.eth.dstAddr});
+    transition select(hdr.eth.etherType) {
+      0x4200: parse_sml;
+      default: accept;
+    }
+  }
+
+  state parse_sml {
+    packet.extract(hdr.sml);
     transition accept;
+  }
+}
+
+control TheChecksumVerification(inout headers hdr, inout metadata meta) {
+  apply {
+    /* TODO: Implement me (if needed) */
   }
 }
 
@@ -53,19 +65,13 @@ control TheIngress(inout headers hdr,
                    inout metadata meta,
                    inout standard_metadata_t standard_metadata) {
   apply {
-    /* TODO: Implement me */
+    standard_metadata.mcast_grp = 1;
   }
 }
 
 control TheEgress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
-  apply {
-    /* TODO: Implement me (if needed) */
-  }
-}
-
-control TheChecksumVerification(inout headers hdr, inout metadata meta) {
   apply {
     /* TODO: Implement me (if needed) */
   }
@@ -79,7 +85,8 @@ control TheChecksumComputation(inout headers  hdr, inout metadata meta) {
 
 control TheDeparser(packet_out packet, in headers hdr) {
   apply {
-    /* TODO: Implement me */
+    packet.emit(hdr.eth);
+    packet.emit(hdr.sml);
   }
 }
 
