@@ -21,7 +21,9 @@ typedef bit<9>  sw_port_t;   /*< Switch port */
 typedef bit<48> mac_addr_t;  /*< MAC address */
 
 header ethernet_t {
-  /* TODO: Define me */
+    mac_addr_t dstAddr;
+    mac_addr_t srcAddr;
+    bit<16> etherType;
 }
 
 header sml_t {
@@ -40,7 +42,11 @@ parser TheParser(packet_in packet,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
   /* TODO: Implement me */
-  state start {}
+  state start {
+    packet.extract(hdr.eth);
+    log_msg("Packet: {} {}", {hdr.eth.srcAddr, hdr.eth.dstAddr});
+    transition accept;
+  }
 }
 
 control TheIngress(inout headers hdr,
