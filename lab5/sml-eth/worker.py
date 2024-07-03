@@ -17,7 +17,7 @@
 from lib.gen import GenInts, GenMultipleOfInRange
 from lib.test import CreateTestData, RunIntTest
 from lib.worker import *
-from scapy.all import Packet, ByteField, IntField, FieldListField, sendp, Ether, get_if_hwaddr
+from scapy.all import Packet, ByteField, IntField, FieldListField, sendp, Ether, get_if_hwaddr, sniff
 
 NUM_ITER   = 1     # TODO: Make sure your program can handle larger values
 CHUNK_SIZE = 16  # TODO: Define me
@@ -42,8 +42,16 @@ def AllReduce(iface, rank, data, result):
     """
     
     for i in range(0, len(data), CHUNK_SIZE):
+        # Send packet
         packet = Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff", type=0x4200) / SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE])
         sendp(packet, iface=iface)
+
+        # Wait for response
+        response = sniff(iface=iface, count=1)
+
+        # Update result
+        if response and response.haslayer(SwitchML):
+            result[i:i+CHUNK_SIZE] = response[SwitchML].data
     
 
 def main():
