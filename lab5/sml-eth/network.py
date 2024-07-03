@@ -54,8 +54,8 @@ def RunControlPlane(net):
     """
     One-time control plane configuration
     """
-    # TODO: Implement me (if needed)
-    pass
+    switch = net.get("s")
+    switch.addMulticastGroup(mgid=1, ports=range(1, NUM_WORKERS+1))
 
 topo = SMLTopo(NUM_WORKERS)
 net = P4Mininet(program="p4/main.p4", topo=topo)
