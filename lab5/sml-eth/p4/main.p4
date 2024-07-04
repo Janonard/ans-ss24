@@ -136,6 +136,7 @@ control TheEgress(inout headers hdr,
   apply {
     if (hdr.sml.isValid() && standard_metadata.mcast_grp != 0) {
       // We are broadcasting an accumulation result.
+      hdr.sml.rank = 0xff;
       hdr.eth.srcAddr = 0x080000000101;
       hdr.eth.dstAddr = 0xffffffffffff;
     }
