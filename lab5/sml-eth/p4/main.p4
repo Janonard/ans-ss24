@@ -30,6 +30,7 @@ header ethernet_t {
 }
 
 header sml_t {
+  worker_id_t rank;
   bit<512> chunk;
 }
 
@@ -89,10 +90,8 @@ control TheIngress(inout headers hdr,
 
   apply {
     if (hdr.eth.isValid() && hdr.eth.dstAddr == 0xffffffffffff && hdr.sml.isValid()) {
-      worker_id_t i_worker = hdr.eth.srcAddr[7:0] - 1;
-
       // Check that this is the first packet from this worker.
-      tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, i_worker);
+      tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, hdr.sml.rank);
       bool first_arrival = arrival_result[0];
       if (!first_arrival) {
         mark_to_drop(standard_metadata);
@@ -108,7 +107,7 @@ control TheIngress(inout headers hdr,
       }
 
       // Check whether this chunk is the last chunk to be accumulated.
-      tuple<bool, bool> accum_result = atomic_enter_bitmap(completion_bitmap, i_worker);
+      tuple<bool, bool> accum_result = atomic_enter_bitmap(completion_bitmap, hdr.sml.rank);
       bool last_accumalation = accum_result[1];
       if (!last_accumalation) {
         mark_to_drop(standard_metadata);
