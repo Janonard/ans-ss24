@@ -19,15 +19,54 @@
 
 typedef bit<9>  sw_port_t;   /*< Switch port */
 typedef bit<48> mac_addr_t;  /*< MAC address */
+typedef bit<32> ipv4_addr_t; /*< IPv4 address */
 typedef bit<8> worker_id_t; /*< Worker IDs */
 
 const worker_id_t n_workers = 2;
-const mac_addr_t accumulator_mac = 0x080000000101;
+const mac_addr_t accumulator_mac = 0x080000000101; // 08:00:00:00:01:01
+const ipv4_addr_t accumulator_ip = 0x0a000101; // 10.0.1.1
+const bit<16> accumulator_port = 0x4200;
 
 header ethernet_t {
-    mac_addr_t dstAddr;
-    mac_addr_t srcAddr;
-    bit<16> etherType;
+  mac_addr_t dstAddr;
+  mac_addr_t srcAddr;
+  bit<16> etherType;
+}
+
+header arp_t {
+  bit<16> htype;
+  bit<16> ptype;
+  bit<8> hlen;
+  bit<8> plen;
+  bit<16> operation;
+  mac_addr_t sender_hardware_address;
+  ipv4_addr_t sender_protocol_address;
+  mac_addr_t target_hardware_address;
+  ipv4_addr_t target_protocol_address;
+}
+
+header ipv4_t {
+  // IPv4 header
+  bit<4> version;
+  bit<4> ihl;
+  bit<6> dscp;
+  bit<2> ecn;
+  bit<16> len;
+  bit<16> ident;
+  bit<2> flags;
+  bit<14> fragment_offset;
+  bit<8> time_to_live;
+  bit<8> protocol;
+  bit<16> checksum;
+  ipv4_addr_t source_address;
+  ipv4_addr_t target_address;
+}
+
+header udp_t {
+  bit<16> source_port;
+  bit<16> target_port;
+  bit<16> len;
+  bit<16> checksum;
 }
 
 header sml_t {
@@ -37,6 +76,9 @@ header sml_t {
 
 struct headers {
   ethernet_t eth;
+  arp_t arp;
+  ipv4_t ipv4;
+  udp_t udp;
   sml_t sml;
 }
 
@@ -49,7 +91,29 @@ parser TheParser(packet_in packet,
   state start {
     packet.extract(hdr.eth);
     transition select(hdr.eth.etherType) {
-      0x4200: parse_sml;
+      0x800: parse_ipv4;
+      0x806: parse_arp;
+      default: accept;
+    }
+  }
+
+  state parse_arp {
+    packet.extract(hdr.arp);
+    transition accept;
+  }
+  
+  state parse_ipv4 {
+    packet.extract(hdr.ipv4);
+    transition select(hdr.ipv4.protocol) {
+      17: parse_udp;
+      default: accept;
+    }
+  }
+
+  state parse_udp {
+    packet.extract(hdr.udp);
+    transition select(hdr.udp.target_port) {
+      accumulator_port: parse_sml;
       default: accept;
     }
   }
@@ -62,10 +126,29 @@ parser TheParser(packet_in packet,
 
 control TheChecksumVerification(inout headers hdr, inout metadata meta) {
   apply {
-    /* TODO: Implement me (if needed) */
+    verify_checksum(
+      hdr.ipv4.isValid(),
+      {
+        hdr.ipv4.version,
+        hdr.ipv4.ihl,
+        hdr.ipv4.dscp,
+        hdr.ipv4.ecn,
+        hdr.ipv4.len,
+        hdr.ipv4.ident,
+        hdr.ipv4.flags,
+        hdr.ipv4.fragment_offset,
+        hdr.ipv4.time_to_live,
+        hdr.ipv4.protocol,
+        hdr.ipv4.source_address,
+        hdr.ipv4.target_address
+      },
+      hdr.ipv4.checksum,
+      HashAlgorithm.csum16
+    );
+
+    // TODO: UDP checksum
   }
 }
-
 
 tuple<bool, bool> atomic_enter_bitmap(register<bit<64>> bitmap, in worker_id_t i_worker) {
   bit<64> old_bitmap_value;
@@ -90,44 +173,43 @@ control TheIngress(inout headers hdr,
   register<bit<64>>(1) completion_bitmap;
 
   apply {
-    if (hdr.eth.isValid() && hdr.eth.dstAddr == accumulator_mac && hdr.sml.isValid()) {
-      // Check that this is the first packet from this worker.
-      tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, hdr.sml.rank);
-      bool first_arrival = arrival_result[0];
-      if (!first_arrival) {
-        mark_to_drop(standard_metadata);
-        return;
-      }
-
-      // Accumulate
-      @atomic {
-        bit<512> old_value;
-        accumulated_chunk.read(old_value, 0);
-        bit<512> new_value = old_value + hdr.sml.chunk;
-        accumulated_chunk.write(0, new_value);
-      }
-
-      // Check whether this chunk is the last chunk to be accumulated.
-      tuple<bool, bool> accum_result = atomic_enter_bitmap(completion_bitmap, hdr.sml.rank);
-      bool last_accumalation = accum_result[1];
-      if (!last_accumalation) {
-        mark_to_drop(standard_metadata);
-        return;
-      }
-
-      // Load result and reset memory.
-      // No need to use atomics here since (a) single extern functions are atomic per definition and
-      // (b) there is only one thread in this section anyways.
-      accumulated_chunk.read(hdr.sml.chunk, 0);
-      completion_bitmap.write(0, 0);
-      accumulated_chunk.write(0, 0);
-      arrival_bitmap.write(0, 0);
-
-      // Broadcast result
-      standard_metadata.mcast_grp = 1;
-    } else {
+    /*
+    // Check that this is the first packet from this worker.
+    tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, hdr.proto.sml.rank);
+    bool first_arrival = arrival_result[0];
+    if (!first_arrival) {
       mark_to_drop(standard_metadata);
+      return;
     }
+
+    // Accumulate
+    @atomic {
+      bit<512> old_value;
+      accumulated_chunk.read(old_value, 0);
+      bit<512> new_value = old_value + hdr.sml.chunk;
+      accumulated_chunk.write(0, new_value);
+    }
+
+    // Check whether this chunk is the last chunk to be accumulated.
+    tuple<bool, bool> accum_result = atomic_enter_bitmap(completion_bitmap, hdr.sml.rank);
+    bool last_accumalation = accum_result[1];
+    if (!last_accumalation) {
+      mark_to_drop(standard_metadata);
+      return;
+    }
+
+    // Load result and reset memory.
+    // No need to use atomics here since (a) single extern functions are atomic per definition and
+    // (b) there is only one thread in this section anyways.
+    accumulated_chunk.read(hdr.sml.chunk, 0);
+    completion_bitmap.write(0, 0);
+    accumulated_chunk.write(0, 0);
+    arrival_bitmap.write(0, 0);
+
+    // Broadcast result
+    standard_metadata.mcast_grp = 1;
+    */
+    mark_to_drop(standard_metadata);
   }
 }
 
@@ -135,24 +217,55 @@ control TheEgress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
   apply {
+    /*
     if (hdr.sml.isValid() && standard_metadata.mcast_grp != 0) {
       // We are broadcasting an accumulation result.
       hdr.sml.rank = 0xff;
       hdr.eth.srcAddr = accumulator_mac;
       hdr.eth.dstAddr = 0xffffffffffff;
     }
+    */
   }
 }
 
 control TheChecksumComputation(inout headers  hdr, inout metadata meta) {
   apply {
-    /* TODO: Implement me (if needed) */
+    update_checksum(
+      hdr.ipv4.isValid(),
+      {
+        hdr.ipv4.version,
+        hdr.ipv4.ihl,
+        hdr.ipv4.dscp,
+        hdr.ipv4.ecn,
+        hdr.ipv4.len,
+        hdr.ipv4.ident,
+        hdr.ipv4.flags,
+        hdr.ipv4.fragment_offset,
+        hdr.ipv4.time_to_live,
+        hdr.ipv4.protocol,
+        hdr.ipv4.source_address,
+        hdr.ipv4.target_address
+      },
+      hdr.ipv4.checksum,
+      HashAlgorithm.csum16
+    );
+    update_checksum( // TODO: Compute actual checksum
+      hdr.udp.isValid(),
+      {
+        16w0
+      },
+      hdr.udp.checksum,
+      HashAlgorithm.identity
+    );
   }
 }
 
 control TheDeparser(packet_out packet, in headers hdr) {
   apply {
     packet.emit(hdr.eth);
+    packet.emit(hdr.arp);
+    packet.emit(hdr.ipv4);
+    packet.emit(hdr.udp);
     packet.emit(hdr.sml);
   }
 }
