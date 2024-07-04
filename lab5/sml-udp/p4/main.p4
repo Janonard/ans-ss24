@@ -173,43 +173,21 @@ control TheIngress(inout headers hdr,
   register<bit<64>>(1) completion_bitmap;
 
   apply {
-    /*
-    // Check that this is the first packet from this worker.
-    tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, hdr.proto.sml.rank);
-    bool first_arrival = arrival_result[0];
-    if (!first_arrival) {
+    if (hdr.arp.isValid() && hdr.arp.operation == 1 && hdr.arp.target_protocol_address == accumulator_ip) {
+      // Our MAC address was requested!
+      standard_metadata.egress_spec = standard_metadata.ingress_port; // Reflect packet.
+      hdr.arp.operation = 2;
+      hdr.arp.target_hardware_address = hdr.arp.sender_hardware_address;
+      hdr.arp.target_protocol_address = hdr.arp.sender_protocol_address;
+      hdr.arp.sender_hardware_address = accumulator_mac;
+      hdr.arp.sender_protocol_address = accumulator_ip;
+      hdr.eth.dstAddr = hdr.eth.srcAddr;
+      hdr.eth.srcAddr = accumulator_mac;
+
+    } else {
       mark_to_drop(standard_metadata);
-      return;
+      
     }
-
-    // Accumulate
-    @atomic {
-      bit<512> old_value;
-      accumulated_chunk.read(old_value, 0);
-      bit<512> new_value = old_value + hdr.sml.chunk;
-      accumulated_chunk.write(0, new_value);
-    }
-
-    // Check whether this chunk is the last chunk to be accumulated.
-    tuple<bool, bool> accum_result = atomic_enter_bitmap(completion_bitmap, hdr.sml.rank);
-    bool last_accumalation = accum_result[1];
-    if (!last_accumalation) {
-      mark_to_drop(standard_metadata);
-      return;
-    }
-
-    // Load result and reset memory.
-    // No need to use atomics here since (a) single extern functions are atomic per definition and
-    // (b) there is only one thread in this section anyways.
-    accumulated_chunk.read(hdr.sml.chunk, 0);
-    completion_bitmap.write(0, 0);
-    accumulated_chunk.write(0, 0);
-    arrival_bitmap.write(0, 0);
-
-    // Broadcast result
-    standard_metadata.mcast_grp = 1;
-    */
-    mark_to_drop(standard_metadata);
   }
 }
 
@@ -217,14 +195,6 @@ control TheEgress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
   apply {
-    /*
-    if (hdr.sml.isValid() && standard_metadata.mcast_grp != 0) {
-      // We are broadcasting an accumulation result.
-      hdr.sml.rank = 0xff;
-      hdr.eth.srcAddr = accumulator_mac;
-      hdr.eth.dstAddr = 0xffffffffffff;
-    }
-    */
   }
 }
 
