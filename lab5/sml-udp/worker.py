@@ -17,52 +17,54 @@
 from lib.gen import GenInts, GenMultipleOfInRange
 from lib.test import CreateTestData, RunIntTest
 from lib.worker import *
-from scapy.all import Packet
-import socket
+from scapy.all import Packet, ByteField, IntField, FieldListField, sendp, Ether, get_if_hwaddr, sniff
 
 NUM_ITER   = 1     # TODO: Make sure your program can handle larger values
-CHUNK_SIZE = None  # TODO: Define me
+CHUNK_SIZE = 16  # TODO: Define me
 
 class SwitchML(Packet):
     name = "SwitchMLPacket"
     fields_desc = [
-        # TODO: Implement me
+        ByteField("rank", 0),
+        FieldListField("data", None, IntField("elem",0))
     ]
 
-def AllReduce(soc, rank, data, result):
+def AllReduce(iface, rank, data, result):
     """
-    Perform in-network all-reduce over UDP
+    Perform in-network all-reduce over ethernet
 
-    :param str    soc: the socket used for all-reduce
+    :param str  iface: the ethernet interface used for all-reduce
     :param int   rank: the worker's rank
     :param [int] data: the input vector for this worker
     :param [int]  res: the output vector
 
     This function is blocking, i.e. only returns with a result or error
     """
+    
+    for i in range(0, len(data), CHUNK_SIZE):
+        # Send packet
+        packet = Ether(src=get_if_hwaddr(iface), dst="08:00:00:00:01:01", type=0x4200) / SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE])
+        sendp(packet, iface=iface)
 
-    # TODO: Implement me
-    # NOTE: Do not send/recv directly to/from the socket.
-    #       Instead, please use the functions send() and receive() from lib/comm.py
-    #       We will use modified versions of these functions to test your program
-    pass
+        # Wait for response
+        response = sniff(iface=iface, count=1)
+
+        # Update result
+        if response and response.haslayer(SwitchML):
+            result[i:i+CHUNK_SIZE] = response[SwitchML].data
+    
 
 def main():
+    iface = 'eth0'
     rank = GetRankOrExit()
-
-    s = None # TODO: Create a UDP socket. 
-    # NOTE: This socket will be used for all AllReduce calls.
-    #       Feel free to go with a different design (e.g. multiple sockets)
-    #       if you want to, but make sure the loop below still works
-
     Log("Started...")
     for i in range(NUM_ITER):
-        num_elem = GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE) # You may want to 'fix' num_elem for debugging
+        num_elem = CHUNK_SIZE*3 #GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE) # You may want to 'fix' num_elem for debugging
         data_out = GenInts(num_elem)
         data_in = GenInts(num_elem, 0)
-        CreateTestData("udp-iter-%d" % i, rank, data_out)
-        AllReduce(s, rank, data_out, data_in)
-        RunIntTest("udp-iter-%d" % i, rank, data_in, True)
+        CreateTestData("eth-iter-%d" % i, rank, data_out)
+        AllReduce(iface, rank, data_out, data_in)
+        RunIntTest("eth-iter-%d" % i, rank, data_in, True) 
     Log("Done")
 
 if __name__ == '__main__':

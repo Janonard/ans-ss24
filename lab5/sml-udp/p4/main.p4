@@ -19,28 +19,24 @@
 
 typedef bit<9>  sw_port_t;   /*< Switch port */
 typedef bit<48> mac_addr_t;  /*< MAC address */
-typedef bit<32> ip4_addr_t;  /*< IPv4 address */
+typedef bit<8> worker_id_t; /*< Worker IDs */
+
+const worker_id_t n_workers = 2;
+const mac_addr_t accumulator_mac = 0x080000000101;
 
 header ethernet_t {
-  /* TODO: Define me */
-}
-
-header ipv4_t {
-  /* TODO: Define me */
-}
-
-header udp_t {
-  /* TODO: Define me */
+    mac_addr_t dstAddr;
+    mac_addr_t srcAddr;
+    bit<16> etherType;
 }
 
 header sml_t {
-  /* TODO: Define me */
+  worker_id_t rank;
+  bit<512> chunk;
 }
 
 struct headers {
   ethernet_t eth;
-  ipv4_t ipv4;
-  udp_t udp;
   sml_t sml;
 }
 
@@ -50,15 +46,88 @@ parser TheParser(packet_in packet,
                  out headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-  /* TODO: Implement me */
-  state start {}
+  state start {
+    packet.extract(hdr.eth);
+    transition select(hdr.eth.etherType) {
+      0x4200: parse_sml;
+      default: accept;
+    }
+  }
+
+  state parse_sml {
+    packet.extract(hdr.sml);
+    transition accept;
+  }
+}
+
+control TheChecksumVerification(inout headers hdr, inout metadata meta) {
+  apply {
+    /* TODO: Implement me (if needed) */
+  }
+}
+
+
+tuple<bool, bool> atomic_enter_bitmap(register<bit<64>> bitmap, in worker_id_t i_worker) {
+  bit<64> old_bitmap_value;
+  bit<64> new_bitmap_value;
+  @atomic {
+    bitmap.read(old_bitmap_value, 0);
+
+    new_bitmap_value = old_bitmap_value | (64w1 << i_worker);
+
+    bitmap.write(0, new_bitmap_value);
+  };
+  bool valid_entry = (old_bitmap_value & (64w1 << i_worker)) == 0;
+  bool last_entry = new_bitmap_value == ((64w1 << n_workers) - 1); 
+  return { valid_entry, last_entry };
 }
 
 control TheIngress(inout headers hdr,
                    inout metadata meta,
                    inout standard_metadata_t standard_metadata) {
+  register<bit<64>>(1) arrival_bitmap;
+  register<bit<512>>(1) accumulated_chunk;
+  register<bit<64>>(1) completion_bitmap;
+
   apply {
-    /* TODO: Implement me */
+    if (hdr.eth.isValid() && hdr.eth.dstAddr == accumulator_mac && hdr.sml.isValid()) {
+      // Check that this is the first packet from this worker.
+      tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, hdr.sml.rank);
+      bool first_arrival = arrival_result[0];
+      if (!first_arrival) {
+        mark_to_drop(standard_metadata);
+        return;
+      }
+
+      // Accumulate
+      @atomic {
+        bit<512> old_value;
+        accumulated_chunk.read(old_value, 0);
+        bit<512> new_value = old_value + hdr.sml.chunk;
+        accumulated_chunk.write(0, new_value);
+      }
+
+      // Check whether this chunk is the last chunk to be accumulated.
+      tuple<bool, bool> accum_result = atomic_enter_bitmap(completion_bitmap, hdr.sml.rank);
+      bool last_accumalation = accum_result[1];
+      if (!last_accumalation) {
+        mark_to_drop(standard_metadata);
+        return;
+      }
+
+      // Load result and reset memory.
+      // No need to use atomics here since (a) single extern functions are atomic per definition and
+      // (b) there is only one thread in this section anyways.
+      accumulated_chunk.read(hdr.sml.chunk, 0);
+      completion_bitmap.write(0, 0);
+      accumulated_chunk.write(0, 0);
+      arrival_bitmap.write(0, 0);
+
+      // Broadcast result
+      standard_metadata.mcast_grp = 1;
+    } else {
+      mark_to_drop(standard_metadata);
+    }
   }
 }
 
@@ -66,13 +135,12 @@ control TheEgress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
   apply {
-    /* TODO: Implement me (if needed) */
-  }
-}
-
-control TheChecksumVerification(inout headers hdr, inout metadata meta) {
-  apply {
-    /* TODO: Implement me (if needed) */
+    if (hdr.sml.isValid() && standard_metadata.mcast_grp != 0) {
+      // We are broadcasting an accumulation result.
+      hdr.sml.rank = 0xff;
+      hdr.eth.srcAddr = accumulator_mac;
+      hdr.eth.dstAddr = 0xffffffffffff;
+    }
   }
 }
 
@@ -84,7 +152,8 @@ control TheChecksumComputation(inout headers  hdr, inout metadata meta) {
 
 control TheDeparser(packet_out packet, in headers hdr) {
   apply {
-    /* TODO: Implement me */
+    packet.emit(hdr.eth);
+    packet.emit(hdr.sml);
   }
 }
 

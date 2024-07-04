@@ -23,10 +23,18 @@ import os
 NUM_WORKERS = 2 # TODO: Make sure your program can handle larger values
 
 class SMLTopo(Topo):
-    def __init__(self, **opts):
+    def __init__(self, n_workers, **opts):
         Topo.__init__(self, **opts)
-        # TODO: Implement me. Feel free to modify the constructor signature
-        # NOTE: Make sure worker names are consistent with RunWorkers() below
+
+        self.workers = [
+            self.addHost(f"w{i}", ip=f"10.0.0.{i + 1}", prefixLen=8, mac=f"08:00:00:00:00:{i+1:02d}")
+            for i in range(n_workers)
+        ]
+
+        self.switch = self.addSwitch("s", dpid="1")
+
+        for worker in self.workers:
+            self.addLink(self.switch, worker)
 
 def RunWorkers(net):
     """
@@ -38,7 +46,7 @@ def RunWorkers(net):
     worker = lambda rank: "w%i" % rank
     log_file = lambda rank: os.path.join(os.environ['APP_LOGS'], "%s.log" % worker(rank))
     for i in range(NUM_WORKERS):
-        net.get(worker(i)).sendCmd('python worker.py %d > %s' % (i, log_file(i)))
+        net.get(worker(i)).sendCmd('python worker.py %d > %s 2> %s.err' % (i, log_file(i), log_file(i)))
     for i in range(NUM_WORKERS):
         net.get(worker(i)).waitOutput()
 
@@ -46,14 +54,15 @@ def RunControlPlane(net):
     """
     One-time control plane configuration
     """
-    # TODO: Implement me (if needed)
-    pass
+    switch = net.get("s")
+    switch.addMulticastGroup(mgid=1, ports=range(1, NUM_WORKERS+1))
 
-topo = None # TODO: Create an SMLTopo instance
+topo = SMLTopo(NUM_WORKERS)
 net = P4Mininet(program="p4/main.p4", topo=topo)
 net.run_control_plane = lambda: RunControlPlane(net)
 net.run_workers = lambda: RunWorkers(net)
 net.start()
 net.run_control_plane()
+net.run_workers()
 CLI(net)
 net.stop()
