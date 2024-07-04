@@ -145,8 +145,6 @@ control TheChecksumVerification(inout headers hdr, inout metadata meta) {
       hdr.ipv4.checksum,
       HashAlgorithm.csum16
     );
-
-    // TODO: UDP checksum
   }
 }
 
@@ -281,7 +279,7 @@ control TheChecksumComputation(inout headers  hdr, inout metadata meta) {
       hdr.ipv4.checksum,
       HashAlgorithm.csum16
     );
-    update_checksum( // TODO: Compute actual checksum
+    update_checksum(
       hdr.udp.isValid(),
       {
         16w0
