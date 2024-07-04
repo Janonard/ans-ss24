@@ -22,6 +22,7 @@ typedef bit<48> mac_addr_t;  /*< MAC address */
 typedef bit<8> worker_id_t; /*< Worker IDs */
 
 const worker_id_t n_workers = 2;
+const mac_addr_t accumulator_mac = 0x080000000101;
 
 header ethernet_t {
     mac_addr_t dstAddr;
@@ -89,7 +90,7 @@ control TheIngress(inout headers hdr,
   register<bit<64>>(1) completion_bitmap;
 
   apply {
-    if (hdr.eth.isValid() && hdr.eth.dstAddr == 0x080000000101 && hdr.sml.isValid()) {
+    if (hdr.eth.isValid() && hdr.eth.dstAddr == accumulator_mac && hdr.sml.isValid()) {
       // Check that this is the first packet from this worker.
       tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, hdr.sml.rank);
       bool first_arrival = arrival_result[0];
@@ -137,7 +138,7 @@ control TheEgress(inout headers hdr,
     if (hdr.sml.isValid() && standard_metadata.mcast_grp != 0) {
       // We are broadcasting an accumulation result.
       hdr.sml.rank = 0xff;
-      hdr.eth.srcAddr = 0x080000000101;
+      hdr.eth.srcAddr = accumulator_mac;
       hdr.eth.dstAddr = 0xffffffffffff;
     }
   }
