@@ -89,7 +89,7 @@ control TheIngress(inout headers hdr,
   register<bit<64>>(1) completion_bitmap;
 
   apply {
-    if (hdr.eth.isValid() && hdr.eth.dstAddr == 0xffffffffffff && hdr.sml.isValid()) {
+    if (hdr.eth.isValid() && hdr.eth.dstAddr == 0x080000000101 && hdr.sml.isValid()) {
       // Check that this is the first packet from this worker.
       tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, hdr.sml.rank);
       bool first_arrival = arrival_result[0];
