@@ -46,7 +46,7 @@ def RunWorkers(net):
     worker = lambda rank: "w%i" % rank
     log_file = lambda rank: os.path.join(os.environ['APP_LOGS'], "%s.log" % worker(rank))
     for i in range(NUM_WORKERS):
-        net.get(worker(i)).sendCmd('python worker.py %d > %s' % (i, log_file(i)))
+        net.get(worker(i)).sendCmd('python worker.py %d > %s 2> %s.err' % (i, log_file(i), log_file(i)))
     for i in range(NUM_WORKERS):
         net.get(worker(i)).waitOutput()
 
@@ -63,5 +63,6 @@ net.run_control_plane = lambda: RunControlPlane(net)
 net.run_workers = lambda: RunWorkers(net)
 net.start()
 net.run_control_plane()
+net.run_workers()
 CLI(net)
 net.stop()

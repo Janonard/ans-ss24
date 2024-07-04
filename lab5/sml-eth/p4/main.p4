@@ -76,7 +76,7 @@ tuple<bool, bool> atomic_enter_bitmap(register<bit<64>> bitmap, in worker_id_t i
     bitmap.write(0, new_bitmap_value);
   };
   bool valid_entry = (old_bitmap_value & (64w1 << i_worker)) == 0;
-  bool last_entry = new_bitmap_value == (64w1 << (n_workers+1)) - 1; 
+  bool last_entry = new_bitmap_value == ((64w1 << n_workers) - 1); 
   return { valid_entry, last_entry };
 }
 
@@ -88,8 +88,8 @@ control TheIngress(inout headers hdr,
   register<bit<64>>(1) completion_bitmap;
 
   apply {
-    if (hdr.eth.isValid() && hdr.eth.dstAddr == 0x080000000101 && hdr.sml.isValid()) {
-      worker_id_t i_worker = hdr.eth.srcAddr[7:0];
+    if (hdr.eth.isValid() && hdr.eth.dstAddr == 0xffffffffffff && hdr.sml.isValid()) {
+      worker_id_t i_worker = hdr.eth.srcAddr[7:0] - 1;
 
       // Check that this is the first packet from this worker.
       tuple<bool, bool> arrival_result = atomic_enter_bitmap(arrival_bitmap, i_worker);
