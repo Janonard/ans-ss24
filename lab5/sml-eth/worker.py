@@ -17,7 +17,7 @@
 from lib.gen import GenInts, GenMultipleOfInRange
 from lib.test import CreateTestData, RunIntTest
 from lib.worker import *
-from scapy.all import Packet, ByteField, IntField, FieldListField, sendp, Ether, get_if_hwaddr, sniff
+from scapy.all import Packet, ByteField, IntField, FieldListField, Ether, get_if_hwaddr, srp, Raw
 
 NUM_ITER   = 1     # TODO: Make sure your program can handle larger values
 CHUNK_SIZE = 16  # TODO: Define me
@@ -42,24 +42,21 @@ def AllReduce(iface, rank, data, result):
     """
     
     for i in range(0, len(data), CHUNK_SIZE):
-        # Send packet
-        packet = Ether(src=get_if_hwaddr(iface), dst="ff:ff:ff:ff:ff:ff", type=0x4200) / SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE])
-        sendp(packet, iface=iface)
+        # Create packet
+        packet = Ether(src=get_if_hwaddr(iface), dst="08:00:00:00:01:01", type=0x4200) / SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE])
 
-        # Wait for response
-        response = sniff(iface=iface, count=1)
-
-        # Update result
-        if response and response.haslayer(SwitchML):
-            result[i:i+CHUNK_SIZE] = response[SwitchML].data
-    
+        # Send packet and wait for answer
+        answer = srp(packet, iface=iface, verbose=False)
+        raw_data = answer[0][0][1][Raw].load
+        result[i:i+CHUNK_SIZE] = SwitchML(raw_data).data
+        Log(SwitchML(raw_data).data)
 
 def main():
     iface = 'eth0'
     rank = GetRankOrExit()
     Log("Started...")
     for i in range(NUM_ITER):
-        num_elem = CHUNK_SIZE*3 #GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE) # You may want to 'fix' num_elem for debugging
+        num_elem = GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE) # You may want to 'fix' num_elem for debugging
         data_out = GenInts(num_elem)
         data_in = GenInts(num_elem, 0)
         CreateTestData("eth-iter-%d" % i, rank, data_out)
