@@ -145,6 +145,38 @@ control TheChecksumVerification(inout headers hdr, inout metadata meta) {
       hdr.ipv4.checksum,
       HashAlgorithm.csum16
     );
+    verify_checksum_with_payload(
+      hdr.udp.isValid() && !hdr.sml.isValid(),
+      {
+        hdr.ipv4.source_address,
+        hdr.ipv4.target_address,
+        8w0,
+        hdr.ipv4.protocol,
+        hdr.udp.len,
+        hdr.udp.source_port,
+        hdr.udp.target_port,
+        hdr.udp.len
+      },
+      hdr.udp.checksum,
+      HashAlgorithm.csum16
+    );
+    verify_checksum_with_payload(
+      hdr.udp.isValid() && hdr.sml.isValid(),
+      {
+        hdr.ipv4.source_address,
+        hdr.ipv4.target_address,
+        8w0,
+        hdr.ipv4.protocol,
+        hdr.udp.len,
+        hdr.udp.source_port,
+        hdr.udp.target_port,
+        hdr.udp.len,
+        hdr.sml.rank,
+        hdr.sml.chunk
+      },
+      hdr.udp.checksum,
+      HashAlgorithm.csum16
+    );
   }
 }
 
@@ -196,7 +228,11 @@ control TheIngress(inout headers hdr,
   register<bit<64>>(1) completion_bitmap;
 
   apply {
-    if (hdr.arp.isValid() && hdr.arp.operation == 1 && hdr.arp.target_protocol_address == accumulator_ip) {
+    if (standard_metadata.checksum_error == 1) {
+      // Drop if checksum invalid.
+      mark_to_drop(standard_metadata);
+
+    } else if (hdr.arp.isValid() && hdr.arp.operation == 1 && hdr.arp.target_protocol_address == accumulator_ip) {
       // Our MAC address was requested!
       standard_metadata.egress_spec = standard_metadata.ingress_port; // Reflect packet.
       hdr.arp.operation = 2;
@@ -319,13 +355,37 @@ control TheChecksumComputation(inout headers  hdr, inout metadata meta) {
       hdr.ipv4.checksum,
       HashAlgorithm.csum16
     );
-    update_checksum(
-      hdr.udp.isValid(),
+    update_checksum_with_payload(
+      hdr.udp.isValid() && !hdr.sml.isValid(),
       {
-        16w0
+        hdr.ipv4.source_address,
+        hdr.ipv4.target_address,
+        8w0,
+        hdr.ipv4.protocol,
+        hdr.udp.len,
+        hdr.udp.source_port,
+        hdr.udp.target_port,
+        hdr.udp.len
       },
       hdr.udp.checksum,
-      HashAlgorithm.identity
+      HashAlgorithm.csum16
+    );
+    update_checksum_with_payload(
+      hdr.udp.isValid() && hdr.sml.isValid(),
+      {
+        hdr.ipv4.source_address,
+        hdr.ipv4.target_address,
+        8w0,
+        hdr.ipv4.protocol,
+        hdr.udp.len,
+        hdr.udp.source_port,
+        hdr.udp.target_port,
+        hdr.udp.len,
+        hdr.sml.rank,
+        hdr.sml.chunk
+      },
+      hdr.udp.checksum,
+      HashAlgorithm.csum16
     );
   }
 }
