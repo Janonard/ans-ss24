@@ -185,11 +185,13 @@ control TheIngress(inout headers hdr,
     } else if (hdr.sml.isValid()) {
       // Handle SML packet
 
-      // Check that address information is valid.
-      bool valid_target_addresses = hdr.eth.dstAddr == accumulator_mac;
-      valid_target_addresses = valid_target_addresses && hdr.ipv4.target_address == accumulator_ip;
-      valid_target_addresses = valid_target_addresses && hdr.sml.rank != 0xff;
-      if (!valid_target_addresses) {
+      // Check that address, port, and rank information is valid.
+      bool valid_sml_packet = hdr.eth.dstAddr == accumulator_mac;
+      valid_sml_packet = valid_sml_packet && hdr.ipv4.target_address == accumulator_ip;
+      valid_sml_packet = valid_sml_packet && hdr.udp.source_port == accumulator_port;
+      valid_sml_packet = valid_sml_packet && hdr.udp.target_port == accumulator_port;
+      valid_sml_packet = valid_sml_packet && hdr.sml.rank != 0xff;
+      if (!valid_sml_packet) {
         mark_to_drop(standard_metadata);
         return;
       }
@@ -218,16 +220,17 @@ control TheIngress(inout headers hdr,
         return;
       }
 
-      // Load result and reset memory.
+      // Broadcast result
+      hdr.sml.rank = 0xff;
+      accumulated_chunk.read(hdr.sml.chunk, 0);
+      standard_metadata.mcast_grp = 2;
+
+      // Reset memory.
       // No need to use atomics here since (a) single extern functions are atomic per definition and
       // (b) there is only one thread in this section anyways.
-      accumulated_chunk.read(hdr.sml.chunk, 0);
       completion_bitmap.write(0, 0);
       accumulated_chunk.write(0, 0);
       arrival_bitmap.write(0, 0);
-
-      // Broadcast result
-      standard_metadata.mcast_grp = 1;
     
     } else {
       mark_to_drop(standard_metadata);
@@ -239,21 +242,29 @@ control TheIngress(inout headers hdr,
 control TheEgress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
+
+  action write_allreduce_broadcast_headers(mac_addr_t hardware_address, ipv4_addr_t protocol_address) {
+    hdr.eth.dstAddr = hardware_address;
+    hdr.eth.srcAddr = accumulator_mac;
+    hdr.ipv4.source_address = accumulator_ip;
+    hdr.ipv4.target_address = protocol_address;
+  }
+
+  table allreduce_broadcast {
+    key = {
+      standard_metadata.egress_rid: exact;
+    }
+    actions = {
+      write_allreduce_broadcast_headers;
+      NoAction;
+    }
+    default_action = NoAction;
+  }
+
   apply {
-    if (hdr.sml.isValid() && standard_metadata.mcast_grp != 0) {
+    if (hdr.sml.isValid() && standard_metadata.mcast_grp == 2) {
       // We are broadcasting an accumulation result. Update all addresses
-      hdr.sml.rank = 0xff;
-
-      worker_id_t target_rank = standard_metadata.egress_rid[7:0] + 1;
-
-      hdr.eth.dstAddr = 40w0x0800000000 ++ target_rank;
-      hdr.eth.srcAddr = accumulator_mac;
-
-      hdr.ipv4.source_address = accumulator_ip;
-      hdr.ipv4.target_address = 24w0x0a0000 ++ target_rank;
-
-      hdr.udp.target_port = hdr.udp.source_port;
-      hdr.udp.source_port = accumulator_port;
+      allreduce_broadcast.apply();
     }
   }
 }

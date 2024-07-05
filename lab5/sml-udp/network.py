@@ -55,7 +55,25 @@ def RunControlPlane(net):
     One-time control plane configuration
     """
     switch = net.get("s")
-    switch.addMulticastGroup(mgid=1, ports=range(1, NUM_WORKERS+1))
+    switch.addMulticastGroup(mgid=2, ports=range(1, NUM_WORKERS+1))
+    switch.insertTableEntry(
+        table_name="TheEgress.allreduce_broadcast",
+        match_fields={"standard_metadata.egress_rid": 0},
+        action_name="TheEgress.write_allreduce_broadcast_headers",
+        action_params={
+            "hardware_address": "08:00:00:00:00:01",
+            "protocol_address": "10.0.0.1"
+        }
+    )
+    switch.insertTableEntry(
+        table_name="TheEgress.allreduce_broadcast",
+        match_fields={"standard_metadata.egress_rid": 1},
+        action_name="TheEgress.write_allreduce_broadcast_headers",
+        action_params={
+            "hardware_address": "08:00:00:00:00:02",
+            "protocol_address": "10.0.0.2"
+        }
+    )
 
 topo = SMLTopo(NUM_WORKERS)
 net = P4Mininet(program="p4/main.p4", topo=topo)
