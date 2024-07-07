@@ -17,7 +17,8 @@
 from lib.gen import GenInts, GenMultipleOfInRange
 from lib.test import CreateTestData, RunIntTest
 from lib.worker import *
-from scapy.all import Packet, ByteField, IntField, FieldListField, sendp, Ether, get_if_hwaddr, sniff
+from scapy.all import Packet, ByteField, IntField, FieldListField, Raw
+import socket
 
 NUM_ITER   = 1     # TODO: Make sure your program can handle larger values
 CHUNK_SIZE = 16  # TODO: Define me
@@ -28,6 +29,7 @@ class SwitchML(Packet):
         ByteField("rank", 0),
         FieldListField("data", None, IntField("elem",0))
     ]
+
 
 def AllReduce(iface, rank, data, result):
     """
@@ -43,15 +45,19 @@ def AllReduce(iface, rank, data, result):
     
     for i in range(0, len(data), CHUNK_SIZE):
         # Send packet
-        packet = Ether(src=get_if_hwaddr(iface), dst="08:00:00:00:01:01", type=0x4200) / SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE])
-        sendp(packet, iface=iface)
+        payload = bytes(SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE]))
+        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp_socket.sendto(payload, ("10.0.1.1", 4200))
+        udp_socket.close()
 
         # Wait for response
-        response = sniff(iface=iface, count=1)
-
-        # Update result
-        if response and response.haslayer(SwitchML):
-            result[i:i+CHUNK_SIZE] = response[SwitchML].data
+        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp_socket.bind((iface, 4200))
+        data, _ = udp_socket.recvfrom(4200)
+        raw_data = data[Raw].load
+        result[i:i+CHUNK_SIZE] = SwitchML(raw_data).data
+        Log(SwitchML(raw_data).data)
+        udp_socket.close()
     
 
 def main():
