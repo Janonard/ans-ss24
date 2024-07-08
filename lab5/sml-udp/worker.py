@@ -20,7 +20,7 @@ from lib.worker import *
 from scapy.all import Packet, ByteField, IntField, FieldListField, Raw
 import socket
 
-NUM_ITER   = 1     # TODO: Make sure your program can handle larger values
+NUM_ITER   = 8     # TODO: Make sure your program can handle larger values
 CHUNK_SIZE = 16  # TODO: Define me
 
 class SwitchML(Packet):

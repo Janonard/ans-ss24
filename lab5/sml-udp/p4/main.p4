@@ -22,7 +22,7 @@ typedef bit<48> mac_addr_t;  /*< MAC address */
 typedef bit<32> ipv4_addr_t; /*< IPv4 address */
 typedef bit<8> worker_id_t; /*< Worker IDs */
 
-const worker_id_t n_workers = 2;
+const worker_id_t n_workers = 8;
 const mac_addr_t accumulator_mac = 0x080000000101; // 08:00:00:00:01:01
 const ipv4_addr_t accumulator_ip = 0x0a000101; // 10.0.1.1
 const bit<16> accumulator_port = 0x4200;
