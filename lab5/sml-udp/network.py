@@ -20,7 +20,7 @@ from mininet.topo import Topo
 from mininet.cli import CLI
 import os
 
-NUM_WORKERS = 2 # TODO: Make sure your program can handle larger values
+NUM_WORKERS = 8 # TODO: Make sure your program can handle larger values
 
 class SMLTopo(Topo):
     def __init__(self, n_workers, **opts):
@@ -58,18 +58,13 @@ def RunControlPlane(net):
 
     # Ethernet forwarding configuration
     switch.addMulticastGroup(mgid=1, ports=range(1, NUM_WORKERS+1))
-    switch.insertTableEntry(
-        table_name="TheIngress.decide_eth_forward",
-        match_fields={"hdr.eth.dstAddr": "08:00:00:00:00:01"},
-        action_name="TheIngress.forward_eth_packet",
-        action_params={"out_port": 1}
-    )
-    switch.insertTableEntry(
-        table_name="TheIngress.decide_eth_forward",
-        match_fields={"hdr.eth.dstAddr": "08:00:00:00:00:02"},
-        action_name="TheIngress.forward_eth_packet",
-        action_params={"out_port": 2}
-    )
+    for i_worker in range(NUM_WORKERS):
+        switch.insertTableEntry(
+            table_name="TheIngress.decide_eth_forward",
+            match_fields={"hdr.eth.dstAddr": f"08:00:00:00:00:{i_worker+1:02x}"},
+            action_name="TheIngress.forward_eth_packet",
+            action_params={"out_port": i_worker+1}
+        )
     switch.insertTableEntry(
         table_name="TheIngress.decide_eth_forward",
         match_fields={"hdr.eth.dstAddr": "ff:ff:ff:ff:ff:ff"},
@@ -78,24 +73,16 @@ def RunControlPlane(net):
 
     # SML result broadcast configuration
     switch.addMulticastGroup(mgid=2, ports=range(1, NUM_WORKERS+1))
-    switch.insertTableEntry(
-        table_name="TheEgress.allreduce_broadcast",
-        match_fields={"standard_metadata.egress_rid": 0},
-        action_name="TheEgress.write_allreduce_broadcast_headers",
-        action_params={
-            "hardware_address": "08:00:00:00:00:01",
-            "protocol_address": "10.0.0.1"
-        }
-    )
-    switch.insertTableEntry(
-        table_name="TheEgress.allreduce_broadcast",
-        match_fields={"standard_metadata.egress_rid": 1},
-        action_name="TheEgress.write_allreduce_broadcast_headers",
-        action_params={
-            "hardware_address": "08:00:00:00:00:02",
-            "protocol_address": "10.0.0.2"
-        }
-    )
+    for i_worker in range(NUM_WORKERS):
+        switch.insertTableEntry(
+            table_name="TheEgress.allreduce_broadcast",
+            match_fields={"standard_metadata.egress_rid": i_worker},
+            action_name="TheEgress.write_allreduce_broadcast_headers",
+            action_params={
+                "hardware_address": f"08:00:00:00:00:{i_worker+1:02x}",
+                "protocol_address": f"10.0.0.{i_worker+1}"
+            }
+        )
 
 topo = SMLTopo(NUM_WORKERS)
 net = P4Mininet(program="p4/main.p4", topo=topo)
