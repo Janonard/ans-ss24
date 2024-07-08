@@ -43,21 +43,20 @@ def AllReduce(iface, rank, data, result):
     This function is blocking, i.e. only returns with a result or error
     """
     
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.bind((f"10.0.0.{rank+1}", 0x4200))
+
     for i in range(0, len(data), CHUNK_SIZE):
         # Send packet
         payload = bytes(SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE]))
-        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp_socket.sendto(payload, ("10.0.1.1", 4200))
-        udp_socket.close()
+        udp_socket.sendto(payload, ("10.0.1.1", 0x4200))
 
-        # Wait for response
-        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp_socket.bind((iface, 4200))
-        data, _ = udp_socket.recvfrom(4200)
-        raw_data = data[Raw].load
-        result[i:i+CHUNK_SIZE] = SwitchML(raw_data).data
-        Log(SwitchML(raw_data).data)
-        udp_socket.close()
+        # Receive answer
+        rec_packet, _ = udp_socket.recvfrom(1024)
+        result[i:i+CHUNK_SIZE] = SwitchML(rec_packet).data
+        Log(SwitchML(rec_packet).data)
+
+    udp_socket.close()
     
 
 def main():
