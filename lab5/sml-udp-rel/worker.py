@@ -23,6 +23,7 @@ import socket
 
 NUM_ITER   = 8     # TODO: Make sure your program can handle larger values
 CHUNK_SIZE = 16  # TODO: Define me
+TIMEOUT = 5
 
 class SwitchML(Packet):
     name = "SwitchMLPacket"
@@ -46,16 +47,26 @@ def AllReduce(soc, rank, data, result):
     """
 
     for i in range(0, len(data), CHUNK_SIZE):
-        # Send packet
+        # Create packet
         chunk = int(i / CHUNK_SIZE)
         payload = bytes(SwitchML(rank=rank, chunk=chunk, data=data[i:i+CHUNK_SIZE]))
-        send(soc, payload, ("10.0.1.1", 0x4200))
+        
+        while True:
+            # Send packet
+            send(soc, payload, ("10.0.1.1", 0x4200))
 
-        # Receive answer
-        rec_packet, _ = receive(soc, 1024)
-        result[i:i+CHUNK_SIZE] = SwitchML(rec_packet).data
-        Log(SwitchML(rec_packet).data)
+            # Receive packet
+            try:
+                rec_packet, _ = receive(soc, 1024)
+            except socket.timeout:
+                # Timeout occurred
+                Log("Timeout")
+                continue
 
+            # Store results
+            result[i:i+CHUNK_SIZE] = SwitchML(rec_packet).data
+            Log(SwitchML(rec_packet).data)
+            break
 
     # NOTE: Do not send/recv directly to/from the socket.
     #       Instead, please use the functions send() and receive() from lib/comm.py
@@ -69,6 +80,7 @@ def main():
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind((f"10.0.0.{rank+1}", 0x4200))
+    #s.settimeout(TIMEOUT)
 
     Log("Started...")
     for i in range(NUM_ITER):
