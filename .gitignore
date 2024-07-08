@@ -4,3 +4,8 @@
 *.dot
 *.png
 *.pdf
+*.pcap
+*.csv
+*.log
+*.txt
+*.log.err
