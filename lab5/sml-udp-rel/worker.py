@@ -17,17 +17,20 @@
 from lib.gen import GenInts, GenMultipleOfInRange
 from lib.test import CreateTestData, RunIntTest
 from lib.worker import *
-from scapy.all import Packet
+from lib.comm import *
+from scapy.all import Packet, ByteField, IntField, FieldListField
 import socket
 
-NUM_ITER   = 1     # TODO: Make sure your program can handle larger values
-CHUNK_SIZE = None  # TODO: Define me
+NUM_ITER   = 8     # TODO: Make sure your program can handle larger values
+CHUNK_SIZE = 16  # TODO: Define me
 
 class SwitchML(Packet):
     name = "SwitchMLPacket"
     fields_desc = [
-        # TODO: Implement me
+        ByteField("rank", 0),
+        FieldListField("data", None, IntField("elem",0))
     ]
+
 
 def AllReduce(soc, rank, data, result):
     """
@@ -53,20 +56,20 @@ def AllReduce(soc, rank, data, result):
 def main():
     rank = GetRankOrExit()
 
-    s = None # TODO: Create a UDP socket. 
-    # NOTE: This socket will be used for all AllReduce calls.
-    #       Feel free to go with a different design (e.g. multiple sockets)
-    #       if you want to, but make sure the loop below still works
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.bind((f"10.0.0.{rank+1}", 0x4200))
 
     Log("Started...")
     for i in range(NUM_ITER):
-        num_elem = GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE) # You may want to 'fix' num_elem for debugging
+        num_elem = CHUNK_SIZE*3 #GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE) # You may want to 'fix' num_elem for debugging
         data_out = GenInts(num_elem)
         data_in = GenInts(num_elem, 0)
         CreateTestData("udp-rel-iter-%d" % i, rank, data_out)
         AllReduce(s, rank, data_out, data_in)
         RunIntTest("udp-rel-iter-%d" % i, rank, data_in, True)
     Log("Done")
+
+    s.close()
 
 if __name__ == '__main__':
     main()
