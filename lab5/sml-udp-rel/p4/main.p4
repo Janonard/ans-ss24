@@ -23,6 +23,8 @@ typedef bit<32> ipv4_addr_t; /*< IPv4 address */
 typedef bit<8> rank_t; /*< Worker IDs */
 typedef bit<8> chunk_id_t;
 
+#define PKT_INSTANCE_TYPE_REPLICATION 5
+
 const rank_t n_workers = 8;
 const mac_addr_t accumulator_mac = 0x080000000101; // 08:00:00:00:01:01
 const ipv4_addr_t accumulator_ip = 0x0a000101; // 10.0.1.1
@@ -89,7 +91,10 @@ struct headers {
   sml_t sml;
 }
 
-struct metadata { /* empty */ }
+struct metadata { 
+  @field_list(0)
+  bool acknowledgement_handled;
+}
 
 parser TheParser(packet_in packet,
                  out headers hdr,
@@ -127,6 +132,9 @@ parser TheParser(packet_in packet,
 
   state parse_sml {
     packet.extract(hdr.sml);
+    if (standard_metadata.instance_type != PKT_INSTANCE_TYPE_REPLICATION) {
+      meta.acknowledgement_handled = false;
+    }
     transition accept;
   }
 }
@@ -247,10 +255,6 @@ bit<2048> read_chunk(register<bit<2048>> chunk_register, in slot_id_t slot_id) {
   return chunk_value;
 }
 
-void override_chunk(register<bit<2048>> chunk_register, in slot_id_t slot_id, in bit<2048> new_value) {
-  chunk_register.write((bit<32>) slot_id, new_value);
-}
-
 /*
  * Misc. Function
  */
@@ -288,8 +292,9 @@ control TheIngress(inout headers hdr,
   }
 
   register<bit<1>>(n_slots) slot_lock;
-  register<bit<64>>(n_slots) completion_gate;
 
+  register<bit<64>>(n_slots) completion_gate;
+  register<bit<64>>(n_slots) acknowledgement_gate;
   register<bit<2048>>(n_slots) chunk;
   register<bit<8>>(n_slots) chunk_id;
 
@@ -323,68 +328,96 @@ control TheIngress(inout headers hdr,
         return;
       }
 
-      slot_id_t slot_id = chunk_to_slot(hdr.sml.chunk_id);
       rank_t rank = hdr.sml.rank;
 
-      if (!acquire_lock(slot_lock, slot_id)) {
-        // Slot is already locked. Try again later.
-        resubmit_preserving_field_list(0);
-        return;
-      }
+      // Packet acknowledgement
+      if (hdr.sml.ack_chunk_id != 0xff && !meta.acknowledgement_handled) {
+        slot_id_t slot_id = chunk_to_slot(hdr.sml.ack_chunk_id);
 
-      chunk_id_t old_chunk_id;
-      chunk_id.read(old_chunk_id, (bit<32>) slot_id);
-
-      if (old_chunk_id == hdr.sml.chunk_id) {
-        tuple<bool, bool> entrance_result = enter_gate(completion_gate, slot_id, rank);
-        bool first_packet_from_rank = entrance_result[0];
-        bool reduce_complete = entrance_result[1];
-
-        bit<2048> chunk_value;
-        if (first_packet_from_rank) {
-          chunk_value = accumulate_chunk(chunk, slot_id, hdr.sml.chunk);
-        } else {
-          chunk_value = read_chunk(chunk, slot_id);
+        if (!acquire_lock(slot_lock, slot_id)) {
+          // Slot is already locked. Try again later.
+          resubmit_preserving_field_list(0);
+          return;
         }
 
-        if (reduce_complete && first_packet_from_rank) {
-          // This is the last packet to arrive for this chunk, broadcast the result
-          hdr.sml.rank = 0xff;
-          hdr.sml.chunk = chunk_value;
-          standard_metadata.mcast_grp = 2;
-          log_msg("L4: Accumulate and Broadcast. Rank {}, Chunk {}", {rank, hdr.sml.chunk_id});
-        } else if (reduce_complete && !first_packet_from_rank) {
-          // The worker has resent the packet and the the computation is complete.
-          // Resend the result
-          hdr.sml.rank = 0xff;
-          hdr.sml.chunk = chunk_value;
+        tuple<bool, bool> entrance_result = enter_gate(acknowledgement_gate, slot_id, rank);
+        bool ack_complete = entrance_result[1];
 
-          ipv4_addr_t swap_ip = hdr.ipv4.source_address;
-          hdr.ipv4.source_address = hdr.ipv4.target_address;
-          hdr.ipv4.target_address = swap_ip;
+        if (ack_complete) {
+          completion_gate.write((bit<32>) slot_id, 0);
+          acknowledgement_gate.write((bit<32>) slot_id, 0);
+          chunk.write((bit<32>) slot_id, 0);
+          chunk_id.write((bit<32>) slot_id, 0);
+        }
 
-          mac_addr_t swap_mac = hdr.eth.srcAddr;
-          hdr.eth.srcAddr = hdr.eth.dstAddr;
-          hdr.eth.dstAddr = swap_mac;
+        release_lock(slot_lock, slot_id);
 
-          standard_metadata.egress_spec = standard_metadata.ingress_port;
-          log_msg("L2: Resend. Rank {}, Chunk {}", {rank, hdr.sml.chunk_id});
-        } else {
-          // The computation is not complete, we can't resend the result yet.
+        // Mark that we have already handled the ack.
+        // If the accumulation fails to lock the slot, the packet will be resubmitted.
+        // This flag makes sure that in this case, the ack isn't handled twice.
+        meta.acknowledgement_handled = true;
+      }
+
+      // Accumulation
+      if (hdr.sml.chunk_id != 0xff) {
+        slot_id_t slot_id = chunk_to_slot(hdr.sml.chunk_id);
+
+        if (!acquire_lock(slot_lock, slot_id)) {
+          // Slot is already locked. Try again later.
+          resubmit_preserving_field_list(0);
+          return;
+        }
+
+        chunk_id_t old_chunk_id;
+        chunk_id.read(old_chunk_id, (bit<32>) slot_id);
+
+        if (old_chunk_id == hdr.sml.chunk_id) {
+          tuple<bool, bool> entrance_result = enter_gate(completion_gate, slot_id, rank);
+          bool first_packet_from_rank = entrance_result[0];
+          bool reduce_complete = entrance_result[1];
+
+          bit<2048> chunk_value;
+          if (first_packet_from_rank) {
+            chunk_value = accumulate_chunk(chunk, slot_id, hdr.sml.chunk);
+          } else {
+            chunk_value = read_chunk(chunk, slot_id);
+          }
+
+          if (reduce_complete && first_packet_from_rank) {
+            // This is the last packet to arrive for this chunk, broadcast the result
+            hdr.sml.rank = 0xff;
+            hdr.sml.chunk = chunk_value;
+            standard_metadata.mcast_grp = 2;
+          } else if (reduce_complete && !first_packet_from_rank) {
+            // The worker has resent the packet and the the computation is complete.
+            // Resend the result
+            hdr.sml.rank = 0xff;
+            hdr.sml.chunk = chunk_value;
+
+            ipv4_addr_t swap_ip = hdr.ipv4.source_address;
+            hdr.ipv4.source_address = hdr.ipv4.target_address;
+            hdr.ipv4.target_address = swap_ip;
+
+            mac_addr_t swap_mac = hdr.eth.srcAddr;
+            hdr.eth.srcAddr = hdr.eth.dstAddr;
+            hdr.eth.dstAddr = swap_mac;
+
+            standard_metadata.egress_spec = standard_metadata.ingress_port;
+          } else {
+            // The computation is not complete, we can't resend the result yet.
+            mark_to_drop(standard_metadata);
+          }
+
+        } else if (old_chunk_id == 0) {
+          // (Re-)initialize the registers
+          enter_and_reset_gate(completion_gate, slot_id, rank);
+          chunk.write((bit<32>) slot_id, hdr.sml.chunk);
+          chunk_id.write((bit<32>) slot_id, hdr.sml.chunk_id);
           mark_to_drop(standard_metadata);
-          log_msg("L1: Request for incomplete computation. Rank {}, Chunk {}", {rank, hdr.sml.chunk_id});
         }
 
-      } else {
-        // (Re-)initialize the registers
-        enter_and_reset_gate(completion_gate, slot_id, rank);
-        override_chunk(chunk, slot_id, hdr.sml.chunk);
-        chunk_id.write((bit<32>) slot_id, hdr.sml.chunk_id);
-        mark_to_drop(standard_metadata);
-        log_msg("L0: Reinit. Rank {}, Chunk {}", {rank, hdr.sml.chunk_id});
+        release_lock(slot_lock, slot_id);
       }
-
-      release_lock(slot_lock, slot_id);
 
     } else if (hdr.eth.isValid()) {
       // Normal packet forwarding.
