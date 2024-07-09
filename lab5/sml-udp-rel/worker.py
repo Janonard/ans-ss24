@@ -23,7 +23,7 @@ import socket
 
 NUM_ITER   = 8     # TODO: Make sure your program can handle larger values
 CHUNK_SIZE = 16  # TODO: Define me
-TIMEOUT = 5
+TIMEOUT = 1
 
 class SwitchML(Packet):
     name = "SwitchMLPacket"
@@ -80,7 +80,7 @@ def main():
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind((f"10.0.0.{rank+1}", 0x4200))
-    #s.settimeout(TIMEOUT)
+    s.settimeout(TIMEOUT)
 
     Log("Started...")
     for i in range(NUM_ITER):
