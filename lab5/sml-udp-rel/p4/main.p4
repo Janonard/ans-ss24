@@ -78,7 +78,7 @@ header sml_t {
   rank_t rank;
   chunk_id_t chunk_id;
   chunk_id_t ack_chunk_id;
-  bit<512> chunk;
+  bit<2048> chunk;
 }
 
 struct headers {
@@ -230,9 +230,9 @@ void release_lock(register<bit<1>> lock_register, in slot_id_t slot_id) {
  * Chunk-Related Functions
  */
 
-bit<512> accumulate_chunk(register<bit<512>> chunk_register, in slot_id_t slot_id, in bit<512> chunk) {
-  bit<512> old_chunk_value;
-  bit<512> new_chunk_value;
+bit<2048> accumulate_chunk(register<bit<2048>> chunk_register, in slot_id_t slot_id, in bit<2048> chunk) {
+  bit<2048> old_chunk_value;
+  bit<2048> new_chunk_value;
   @atomic {
     chunk_register.read(old_chunk_value, (bit<32>) slot_id);
     new_chunk_value = old_chunk_value + chunk;
@@ -241,13 +241,13 @@ bit<512> accumulate_chunk(register<bit<512>> chunk_register, in slot_id_t slot_i
   return new_chunk_value;
 }
 
-bit<512> read_chunk(register<bit<512>> chunk_register, in slot_id_t slot_id) {
-  bit<512> chunk_value;
+bit<2048> read_chunk(register<bit<2048>> chunk_register, in slot_id_t slot_id) {
+  bit<2048> chunk_value;
   chunk_register.read(chunk_value, (bit<32>) slot_id);
   return chunk_value;
 }
 
-void override_chunk(register<bit<512>> chunk_register, in slot_id_t slot_id, in bit<512> new_value) {
+void override_chunk(register<bit<2048>> chunk_register, in slot_id_t slot_id, in bit<2048> new_value) {
   chunk_register.write((bit<32>) slot_id, new_value);
 }
 
@@ -290,7 +290,7 @@ control TheIngress(inout headers hdr,
   register<bit<1>>(n_slots) slot_lock;
   register<bit<64>>(n_slots) completion_gate;
 
-  register<bit<512>>(n_slots) chunk;
+  register<bit<2048>>(n_slots) chunk;
   register<bit<8>>(n_slots) chunk_id;
 
   apply {
@@ -334,15 +334,13 @@ control TheIngress(inout headers hdr,
 
       chunk_id_t old_chunk_id;
       chunk_id.read(old_chunk_id, (bit<32>) slot_id);
-      bit<64> old_completion_gate_value;
-      completion_gate.read(old_completion_gate_value, (bit<32>) slot_id);
 
       if (old_chunk_id == hdr.sml.chunk_id) {
         tuple<bool, bool> entrance_result = enter_gate(completion_gate, slot_id, rank);
         bool first_packet_from_rank = entrance_result[0];
         bool reduce_complete = entrance_result[1];
 
-        bit<512> chunk_value;
+        bit<2048> chunk_value;
         if (first_packet_from_rank) {
           chunk_value = accumulate_chunk(chunk, slot_id, hdr.sml.chunk);
         } else {
