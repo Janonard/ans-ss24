@@ -19,8 +19,8 @@ from lib.test import CreateTestData, RunIntTest
 from lib.worker import *
 from scapy.all import Packet, ByteField, IntField, FieldListField, Ether, get_if_hwaddr, srp, Raw
 
-NUM_ITER   = 1     # TODO: Make sure your program can handle larger values
-CHUNK_SIZE = 16  # TODO: Define me
+NUM_ITER   = 3  
+CHUNK_SIZE = 16  
 
 class SwitchML(Packet):
     name = "SwitchMLPacket"
@@ -56,7 +56,7 @@ def main():
     rank = GetRankOrExit()
     Log("Started...")
     for i in range(NUM_ITER):
-        num_elem = GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE) # You may want to 'fix' num_elem for debugging
+        num_elem = GenMultipleOfInRange(2, 2048, 2 * CHUNK_SIZE)
         data_out = GenInts(num_elem)
         data_in = GenInts(num_elem, 0)
         CreateTestData("eth-iter-%d" % i, rank, data_out)
