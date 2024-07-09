@@ -30,6 +30,7 @@ class SwitchML(Packet):
     fields_desc = [
         ByteField("rank", 0),
         ByteField("chunk", 0),
+        ByteField("ack", 0),
         FieldListField("data", None, IntField("elem",0))
     ]
 
@@ -46,11 +47,13 @@ def AllReduce(soc, rank, data, result):
     This function is blocking, i.e. only returns with a result or error
     """
 
+    ack = 0xff
     for i in range(0, len(data), CHUNK_SIZE):
         # Create packet
         chunk = int(i / CHUNK_SIZE)
-        payload = bytes(SwitchML(rank=rank, chunk=chunk, data=data[i:i+CHUNK_SIZE]))
-        
+        payload = bytes(SwitchML(rank=rank, chunk=chunk, ack=ack, data=data[i:i+CHUNK_SIZE]))
+        ack = chunk
+
         while True:
             # Send packet
             send(soc, payload, ("10.0.1.1", 0x4200))
@@ -68,12 +71,9 @@ def AllReduce(soc, rank, data, result):
             Log(SwitchML(rec_packet).data)
             break
 
-    # NOTE: Do not send/recv directly to/from the socket.
-    #       Instead, please use the functions send() and receive() from lib/comm.py
-    #       We will use modified versions of these functions to test your program
-    #
-    #       You may use the functions unreliable_send() and unreliable_receive()
-    #       to test how your solution handles dropped/delayed packets
+    # Send ackknowledge
+    payload = bytes(SwitchML(rank=rank, chunk=0xff, ack=ack))
+    send(soc, payload, ("10.0.1.1", 0x4200))
 
 def main():
     rank = GetRankOrExit()
