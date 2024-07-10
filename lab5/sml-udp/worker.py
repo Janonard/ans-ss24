@@ -21,7 +21,7 @@ from lib.comm import *
 from scapy.all import Packet, ByteField, IntField, FieldListField
 import socket
 
-NUM_ITER   = 3 
+NUM_ITER   = 5
 CHUNK_SIZE = 64  
 
 class SwitchML(Packet):

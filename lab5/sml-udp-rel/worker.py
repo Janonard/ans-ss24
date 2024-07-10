@@ -21,7 +21,7 @@ from lib.comm import *
 from scapy.all import Packet, ByteField, IntField, FieldListField
 import socket
 
-NUM_ITER   = 3
+NUM_ITER   = 5
 CHUNK_SIZE = 64
 TIMEOUT = 1
 
@@ -56,11 +56,11 @@ def AllReduce(soc, rank, data, result):
 
         while True:
             # Send packet
-            unreliable_send(soc, payload, ("10.0.1.1", 0x4200))
+            unreliable_send(soc, payload, ("10.0.1.1", 0x4200), p=0.05)
 
             # Receive packet
             try:
-                rec_packet, _ = unreliable_receive(soc, 1024)
+                rec_packet, _ = unreliable_receive(soc, 1024, p=0.05)
             except socket.timeout:
                 # Timeout occurred
                 Log("Timeout")

@@ -19,7 +19,7 @@ from lib.test import CreateTestData, RunIntTest
 from lib.worker import *
 from scapy.all import Packet, ByteField, IntField, FieldListField, Ether, get_if_hwaddr, srp, Raw
 
-NUM_ITER   = 3  
+NUM_ITER   = 5
 CHUNK_SIZE = 64  
 
 class SwitchML(Packet):
