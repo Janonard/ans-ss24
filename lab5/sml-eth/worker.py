@@ -20,7 +20,7 @@ from lib.worker import *
 from scapy.all import Packet, ByteField, IntField, FieldListField, Ether, get_if_hwaddr, srp, Raw
 
 NUM_ITER   = 3  
-CHUNK_SIZE = 16  
+CHUNK_SIZE = 64  
 
 class SwitchML(Packet):
     name = "SwitchMLPacket"

@@ -21,7 +21,7 @@ typedef bit<9>  sw_port_t;   /*< Switch port */
 typedef bit<48> mac_addr_t;  /*< MAC address */
 typedef bit<8> worker_id_t; /*< Worker IDs */
 
-const worker_id_t n_workers = 2;
+const worker_id_t n_workers = 8;
 const mac_addr_t accumulator_mac = 0x080000000101;
 
 header ethernet_t {
@@ -32,7 +32,7 @@ header ethernet_t {
 
 header sml_t {
   worker_id_t rank;
-  bit<512> chunk;
+  bit<2048> chunk;
 }
 
 struct headers {
@@ -86,7 +86,7 @@ control TheIngress(inout headers hdr,
                    inout metadata meta,
                    inout standard_metadata_t standard_metadata) {
   register<bit<64>>(1) arrival_bitmap;
-  register<bit<512>>(1) accumulated_chunk;
+  register<bit<2048>>(1) accumulated_chunk;
   register<bit<64>>(1) completion_bitmap;
 
   apply {
@@ -101,9 +101,9 @@ control TheIngress(inout headers hdr,
 
       // Accumulate
       @atomic {
-        bit<512> old_value;
+        bit<2048> old_value;
         accumulated_chunk.read(old_value, 0);
-        bit<512> new_value = old_value + hdr.sml.chunk;
+        bit<2048> new_value = old_value + hdr.sml.chunk;
         accumulated_chunk.write(0, new_value);
       }
 
