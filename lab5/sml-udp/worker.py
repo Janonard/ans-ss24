@@ -28,8 +28,6 @@ class SwitchML(Packet):
     name = "SwitchMLPacket"
     fields_desc = [
         ByteField("rank", 0),
-        ByteField("chunk", 0),
-        ByteField("ack_chunk", 0),
         FieldListField("data", None, IntField("elem",0))
     ]
 
@@ -47,20 +45,14 @@ def AllReduce(soc, rank, data, result):
     """
 
     for i in range(0, len(data), CHUNK_SIZE):
-        chunk_id = i//CHUNK_SIZE
-        ack_chunk_id = chunk_id - 1 if chunk_id > 0 else 0xFF
         # Send packet
-        payload = bytes(SwitchML(rank=rank, chunk=chunk_id, ack_chunk=ack_chunk_id, data=data[i:i+CHUNK_SIZE]))
+        payload = bytes(SwitchML(rank=rank, data=data[i:i+CHUNK_SIZE]))
         send(soc, payload, ("10.0.1.1", 0x4200))
 
         # Receive answer
         rec_packet, _ = receive(soc, 1024)
         result[i:i+CHUNK_SIZE] = SwitchML(rec_packet).data
         Log(SwitchML(rec_packet).data)
-
-    # Send last ack packet
-    payload = bytes(SwitchML(rank=rank, chunk=0xFF, ack_chunk=len(data)//CHUNK_SIZE, data=data[i:i+CHUNK_SIZE]))
-    send(soc, payload, ("10.0.1.1", 0x4200))
 
 def main():
     rank = GetRankOrExit()
