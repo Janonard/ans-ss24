@@ -71,7 +71,7 @@ header udp_t {
 
 header sml_t {
   worker_id_t rank;
-  bit<512> chunk;
+  bit<2048> chunk;
 }
 
 struct headers {
@@ -224,7 +224,7 @@ control TheIngress(inout headers hdr,
   }
 
   register<bit<64>>(1) arrival_bitmap;
-  register<bit<512>>(1) accumulated_chunk;
+  register<bit<2048>>(1) accumulated_chunk;
   register<bit<64>>(1) completion_bitmap;
 
   apply {
@@ -267,9 +267,9 @@ control TheIngress(inout headers hdr,
 
       // Accumulate
       @atomic {
-        bit<512> old_value;
+        bit<2048> old_value;
         accumulated_chunk.read(old_value, 0);
-        bit<512> new_value = old_value + hdr.sml.chunk;
+        bit<2048> new_value = old_value + hdr.sml.chunk;
         accumulated_chunk.write(0, new_value);
       }
 

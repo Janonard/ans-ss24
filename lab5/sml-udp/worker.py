@@ -22,7 +22,7 @@ from scapy.all import Packet, ByteField, IntField, FieldListField
 import socket
 
 NUM_ITER   = 3 
-CHUNK_SIZE = 16  
+CHUNK_SIZE = 64  
 
 class SwitchML(Packet):
     name = "SwitchMLPacket"
