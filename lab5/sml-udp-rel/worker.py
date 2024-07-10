@@ -56,19 +56,24 @@ def AllReduce(soc, rank, data, result):
 
         while True:
             # Send packet
-            send(soc, payload, ("10.0.1.1", 0x4200))
+            unreliable_send(soc, payload, ("10.0.1.1", 0x4200))
 
             # Receive packet
             try:
-                rec_packet, _ = receive(soc, 1024)
+                rec_packet, _ = unreliable_receive(soc, 1024)
             except socket.timeout:
                 # Timeout occurred
                 Log("Timeout")
                 continue
+            
+            rec_packet = SwitchML(rec_packet)
+            if rec_packet.rank != 0xFF or rec_packet.chunk != chunk:
+                Log("Illegal/duplicate packet")
+                continue
 
             # Store results
-            result[i:i+CHUNK_SIZE] = SwitchML(rec_packet).data
-            Log(SwitchML(rec_packet).data)
+            result[i:i+CHUNK_SIZE] = rec_packet.data
+            Log(rec_packet.data)
             break
 
     # Send ackknowledge

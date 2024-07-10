@@ -248,6 +248,37 @@ bit<2048> read_chunk(register<bit<2048>> chunk_register, in slot_id_t slot_id) {
 }
 
 /*
+ * Slot functions
+ */
+
+enum bit<3> SlotState {
+  Empty = 0, // No chunks have arrived yet, everything clear
+  Accumulating = 1, // The slot is active and packets are arriving for it
+  Broadcasting = 2, // The result has been broadcasted, and acknowledgements are coming in.
+  Completed = 3, // Accumulation is complete and all workers have acknowledged the result.
+  Invalid = 4, // Error state
+}
+
+SlotState get_slot_state(register<bit<64>> completion_gate, register<bit<64>> acknowledgement_gate, in slot_id_t slot_id) {
+  bit<64> completion_gate_value;
+  bit<64> ack_gate_value;
+  completion_gate.read(completion_gate_value, (bit<32>) slot_id);
+  acknowledgement_gate.read(ack_gate_value, (bit<32>) slot_id);
+
+  if (completion_gate_value == 0 && ack_gate_value == 0) {
+    return SlotState.Empty;
+  } else if (completion_gate_value > 0 && completion_gate_value != ((64w1 << n_workers) - 1) && ack_gate_value == 0) {
+    return SlotState.Accumulating;
+  } else if (completion_gate_value == ((64w1 << n_workers) - 1) && ack_gate_value != ((64w1 << n_workers) - 1)) {
+    return SlotState.Broadcasting;
+  } else if (completion_gate_value == ((64w1 << n_workers) - 1) && ack_gate_value == ((64w1 << n_workers) - 1)) {
+    return SlotState.Completed;
+  } else {
+    return SlotState.Invalid;
+  }
+}
+
+/*
  * Misc. Function
  */
 
@@ -335,73 +366,85 @@ control TheIngress(inout headers hdr,
           return;
         }
 
-        chunk_id_t slot_chunk_id;
+        SlotState slot_state = get_slot_state(completion_gate, acknowledgement_gate, slot_id);
+        bit<8> slot_chunk_id;
         chunk_id.read(slot_chunk_id, (bit<32>) slot_id);
 
-        if (slot_chunk_id != hdr.sml_header.ack_chunk_id) {
-          // They are trying to acknowledge a chunk that's not here.
-          // Something's wrong. Drop this packet and abord.
-          mark_to_drop(standard_metadata);
-          release_lock(slot_lock, slot_id);
-          return;
+        if (slot_state == SlotState.Broadcasting && slot_chunk_id == hdr.sml_header.ack_chunk_id) {
+          bool fully_acked = enter_gate(acknowledgement_gate, slot_id, rank)[1];
+          log_msg("SML: Rank {} has acknowledged chunk {}", {rank, slot_chunk_id});
+          if (fully_acked) {
+            log_msg("SML: Chunk {} is now fully acknowledged", {slot_chunk_id});
+          }
+        } else {
+          log_msg("SML: Illegal ack for chunk {} from rank {}", {hdr.sml_header.ack_chunk_id, rank});
         }
-
-        tuple<bool, bool> entrance_result = enter_gate(acknowledgement_gate, slot_id, rank);
-        bool ack_complete = entrance_result[1];
-
-        log_msg("SML: Ack for chunk {} from rank {}", {hdr.sml_header.ack_chunk_id, rank});
-        if (ack_complete) {
-          completion_gate.write((bit<32>) slot_id, 0);
-          acknowledgement_gate.write((bit<32>) slot_id, 0);
-          chunk.write((bit<32>) slot_id, 0);
-          chunk_id.write((bit<32>) slot_id, 0);
-          log_msg("SML: Resetting Slot {}", {slot_id});
-        }
-
+        
         release_lock(slot_lock, slot_id);
       }
 
-      // Accumulation
+      // AllReduce
       if (hdr.sml_header.chunk_id != 0xff) {
         slot_id_t slot_id = chunk_to_slot(hdr.sml_header.chunk_id);
 
         if (!acquire_lock(slot_lock, slot_id)) {
           // Slot is already locked. Try again later.
-          log_msg("SML: Can't aquire slot {}'s lock for rank {} for accumulation", {slot_id, rank});
+          log_msg("SML: Can't aquire slot {}'s lock for rank {} for AllReduce", {slot_id, rank});
           mark_to_drop(standard_metadata);
           return;
         }
 
-        chunk_id_t old_chunk_id;
-        chunk_id.read(old_chunk_id, (bit<32>) slot_id);
+        SlotState slot_state = get_slot_state(completion_gate, acknowledgement_gate, slot_id);
+        bit<8> slot_chunk_id;
+        chunk_id.read(slot_chunk_id, (bit<32>) slot_id);
 
-        if (old_chunk_id == hdr.sml_header.chunk_id) {
-          tuple<bool, bool> entrance_result = enter_gate(completion_gate, slot_id, rank);
-          bool first_packet_from_rank = entrance_result[0];
-          bool reduce_complete = entrance_result[1];
+        if (slot_state == SlotState.Empty || slot_state == SlotState.Completed) {
+          // Reset or Initialize slot
+          enter_and_reset_gate(completion_gate, slot_id, rank);
+          acknowledgement_gate.write((bit<32>) slot_id, 0);
+          chunk.write((bit<32>) slot_id, hdr.sml_body.chunk);
+          chunk_id.write((bit<32>) slot_id, hdr.sml_header.chunk_id);
+          mark_to_drop(standard_metadata);
+          log_msg("SML: Initializing slot for chunk {} from rank {}", {hdr.sml_header.chunk_id, rank});
 
-          bit<2048> chunk_value;
-          if (first_packet_from_rank) {
-            log_msg("SML: Accumulating onto chunk {} from rank {}", {hdr.sml_header.chunk_id, rank});
-            chunk_value = accumulate_chunk(chunk, slot_id, hdr.sml_body.chunk);
+        } else if (slot_state == SlotState.Accumulating) {
+          if (slot_chunk_id == hdr.sml_header.chunk_id) {
+            tuple<bool, bool> entrance_result = enter_gate(completion_gate, slot_id, rank);
+            bool first_packet = entrance_result[0];
+            bool accumulation_complete = entrance_result[1];
+
+            if (first_packet) {
+              log_msg("SML: Accumulating onto chunk {} from rank {}", {hdr.sml_header.chunk_id, rank});
+              bit<2048> chunk_value = accumulate_chunk(chunk, slot_id, hdr.sml_body.chunk);
+
+              if (accumulation_complete) {
+                // This is the last packet to arrive for this chunk, broadcast the result
+                hdr.sml_header.rank = 0xff;
+                hdr.sml_header.ack_chunk_id = 0xff;
+                hdr.sml_body.chunk = chunk_value;
+                standard_metadata.mcast_grp = 2;
+                log_msg("SML: Broadcasting chunk {}", {hdr.sml_header.chunk_id});
+              } else {
+                mark_to_drop(standard_metadata);
+              }
+            } else {
+              log_msg("SML: Superfluous resend of chunk {} from rank {}", {hdr.sml_header.chunk_id, rank});
+              mark_to_drop(standard_metadata);
+            }
+
           } else {
-            log_msg("SML: Reading chunk {} for rank {}", {hdr.sml_header.chunk_id, rank});
-            chunk_value = read_chunk(chunk, slot_id);
+            log_msg(
+              "SML: Can not accumulate, chunk ID mismatch: Chunk in slot: {}, Chunk in packet from rank {}: {}",
+              {slot_chunk_id, rank, hdr.sml_header.chunk_id}
+            );
+            mark_to_drop(standard_metadata);
           }
-
-          if (reduce_complete && first_packet_from_rank) {
-            // This is the last packet to arrive for this chunk, broadcast the result
+        } else if (slot_state == SlotState.Broadcasting) {
+          if (slot_chunk_id == hdr.sml_header.chunk_id) {
+            log_msg("SML: Resending chunk {} to rank {}", {slot_chunk_id, rank});
             hdr.sml_header.rank = 0xff;
             hdr.sml_header.ack_chunk_id = 0xff;
-            hdr.sml_body.chunk = chunk_value;
-            standard_metadata.mcast_grp = 2;
-            log_msg("SML: Broadcasting chunk {}", {hdr.sml_header.chunk_id});
-          } else if (reduce_complete && !first_packet_from_rank) {
-            // The worker has resent the packet and the the computation is complete.
-            // Resend the result
-            hdr.sml_header.rank = 0xff;
-            hdr.sml_header.ack_chunk_id = 0xff;
-            hdr.sml_body.chunk = chunk_value;
+            hdr.sml_body.chunk = read_chunk(chunk, slot_id);
 
             ipv4_addr_t swap_ip = hdr.ipv4.source_address;
             hdr.ipv4.source_address = hdr.ipv4.target_address;
@@ -412,24 +455,21 @@ control TheIngress(inout headers hdr,
             hdr.eth.dstAddr = swap_mac;
 
             standard_metadata.egress_spec = standard_metadata.ingress_port;
-            log_msg("SML: Resending chunk {} to rank {}", {hdr.sml_header.chunk_id, rank});
           } else {
-            // The computation is not complete, we can't resend the result yet.
+            log_msg(
+              "SML: Can not resend, chunk ID mismatch: Chunk in slot: {}, Chunk in packet from rank {}: {}",
+              {slot_chunk_id, rank, hdr.sml_header.chunk_id}
+            );
             mark_to_drop(standard_metadata);
           }
 
-        } else if (old_chunk_id == 0) {
-          // (Re-)initialize the registers
-          enter_and_reset_gate(completion_gate, slot_id, rank);
-          chunk.write((bit<32>) slot_id, hdr.sml_body.chunk);
-          chunk_id.write((bit<32>) slot_id, hdr.sml_header.chunk_id);
+        } else {
+          log_msg("SML: Can't handle chunk {} from rank {}: Illegal state", {hdr.sml_header.chunk_id, rank});
           mark_to_drop(standard_metadata);
-          log_msg("SML: Initializing slot for chunk {} from rank {}", {hdr.sml_header.chunk_id, rank});
+
         }
 
         release_lock(slot_lock, slot_id);
-      } else {
-        mark_to_drop(standard_metadata);
       }
 
     } else if (hdr.eth.isValid()) {
