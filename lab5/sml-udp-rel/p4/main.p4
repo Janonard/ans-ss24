@@ -76,10 +76,13 @@ header udp_t {
   bit<16> checksum;
 }
 
-header sml_t {
+header sml_header_t {
   rank_t rank;
   chunk_id_t chunk_id;
   chunk_id_t ack_chunk_id;
+}
+
+header sml_body_t {
   bit<2048> chunk;
 }
 
@@ -88,13 +91,11 @@ struct headers {
   arp_t arp;
   ipv4_t ipv4;
   udp_t udp;
-  sml_t sml;
+  sml_header_t sml_header;
+  sml_body_t sml_body;
 }
 
-struct metadata { 
-  @field_list(0)
-  bool acknowledgement_handled;
-}
+struct metadata {}
 
 parser TheParser(packet_in packet,
                  out headers hdr,
@@ -125,16 +126,21 @@ parser TheParser(packet_in packet,
   state parse_udp {
     packet.extract(hdr.udp);
     transition select(hdr.udp.target_port) {
-      accumulator_port: parse_sml;
+      accumulator_port: parse_sml_header;
       default: accept;
     }
   }
 
-  state parse_sml {
-    packet.extract(hdr.sml);
-    if (standard_metadata.instance_type != PKT_INSTANCE_TYPE_REPLICATION) {
-      meta.acknowledgement_handled = false;
+  state parse_sml_header {
+    packet.extract(hdr.sml_header);
+    transition select(hdr.sml_header.chunk_id) {
+      0xff: accept;
+      default: parse_sml_body;
     }
+  }
+
+  state parse_sml_body {
+    packet.extract(hdr.sml_body);
     transition accept;
   }
 }
@@ -161,22 +167,7 @@ control TheChecksumVerification(inout headers hdr, inout metadata meta) {
       HashAlgorithm.csum16
     );
     verify_checksum_with_payload(
-      hdr.udp.isValid() && !hdr.sml.isValid(),
-      {
-        hdr.ipv4.source_address,
-        hdr.ipv4.target_address,
-        8w0,
-        hdr.ipv4.protocol,
-        hdr.udp.len,
-        hdr.udp.source_port,
-        hdr.udp.target_port,
-        hdr.udp.len
-      },
-      hdr.udp.checksum,
-      HashAlgorithm.csum16
-    );
-    verify_checksum_with_payload(
-      hdr.udp.isValid() && hdr.sml.isValid(),
+      hdr.udp.isValid(),
       {
         hdr.ipv4.source_address,
         hdr.ipv4.target_address,
@@ -186,7 +177,8 @@ control TheChecksumVerification(inout headers hdr, inout metadata meta) {
         hdr.udp.source_port,
         hdr.udp.target_port,
         hdr.udp.len,
-        hdr.sml
+        hdr.sml_header,
+        hdr.sml_body
       },
       hdr.udp.checksum,
       HashAlgorithm.csum16
@@ -314,7 +306,7 @@ control TheIngress(inout headers hdr,
       hdr.eth.dstAddr = hdr.eth.srcAddr;
       hdr.eth.srcAddr = accumulator_mac;
 
-    } else if (hdr.sml.isValid()) {
+    } else if (hdr.sml_header.isValid()) {
       // Handle SML packet
 
       // Check that address, port, and rank information is valid.
@@ -322,77 +314,94 @@ control TheIngress(inout headers hdr,
       valid_sml_packet = valid_sml_packet && hdr.ipv4.target_address == accumulator_ip;
       valid_sml_packet = valid_sml_packet && hdr.udp.source_port == accumulator_port;
       valid_sml_packet = valid_sml_packet && hdr.udp.target_port == accumulator_port;
-      valid_sml_packet = valid_sml_packet && hdr.sml.rank != 0xff;
+      valid_sml_packet = valid_sml_packet && hdr.sml_header.rank != 0xff;
+      valid_sml_packet = valid_sml_packet && (hdr.sml_header.chunk_id == 0xff || hdr.sml_body.isValid());
+      valid_sml_packet = valid_sml_packet && !(hdr.sml_header.chunk_id == 0xff && hdr.sml_body.isValid());
       if (!valid_sml_packet) {
         mark_to_drop(standard_metadata);
         return;
       }
 
-      rank_t rank = hdr.sml.rank;
+      rank_t rank = hdr.sml_header.rank;
 
       // Packet acknowledgement
-      if (hdr.sml.ack_chunk_id != 0xff && !meta.acknowledgement_handled) {
-        slot_id_t slot_id = chunk_to_slot(hdr.sml.ack_chunk_id);
+      if (hdr.sml_header.ack_chunk_id != 0xff) {
+        slot_id_t slot_id = chunk_to_slot(hdr.sml_header.ack_chunk_id);
 
         if (!acquire_lock(slot_lock, slot_id)) {
           // Slot is already locked. Try again later.
-          resubmit_preserving_field_list(0);
+          log_msg("SML: Can't aquire slot {}'s lock for rank {} for ack processing", {slot_id, rank});
+          mark_to_drop(standard_metadata);
+          return;
+        }
+
+        chunk_id_t slot_chunk_id;
+        chunk_id.read(slot_chunk_id, (bit<32>) slot_id);
+
+        if (slot_chunk_id != hdr.sml_header.ack_chunk_id) {
+          // They are trying to acknowledge a chunk that's not here.
+          // Something's wrong. Drop this packet and abord.
+          mark_to_drop(standard_metadata);
+          release_lock(slot_lock, slot_id);
           return;
         }
 
         tuple<bool, bool> entrance_result = enter_gate(acknowledgement_gate, slot_id, rank);
         bool ack_complete = entrance_result[1];
 
+        log_msg("SML: Ack for chunk {} from rank {}", {hdr.sml_header.ack_chunk_id, rank});
         if (ack_complete) {
           completion_gate.write((bit<32>) slot_id, 0);
           acknowledgement_gate.write((bit<32>) slot_id, 0);
           chunk.write((bit<32>) slot_id, 0);
           chunk_id.write((bit<32>) slot_id, 0);
+          log_msg("SML: Resetting Slot {}", {slot_id});
         }
 
         release_lock(slot_lock, slot_id);
-
-        // Mark that we have already handled the ack.
-        // If the accumulation fails to lock the slot, the packet will be resubmitted.
-        // This flag makes sure that in this case, the ack isn't handled twice.
-        meta.acknowledgement_handled = true;
       }
 
       // Accumulation
-      if (hdr.sml.chunk_id != 0xff) {
-        slot_id_t slot_id = chunk_to_slot(hdr.sml.chunk_id);
+      if (hdr.sml_header.chunk_id != 0xff) {
+        slot_id_t slot_id = chunk_to_slot(hdr.sml_header.chunk_id);
 
         if (!acquire_lock(slot_lock, slot_id)) {
           // Slot is already locked. Try again later.
-          resubmit_preserving_field_list(0);
+          log_msg("SML: Can't aquire slot {}'s lock for rank {} for accumulation", {slot_id, rank});
+          mark_to_drop(standard_metadata);
           return;
         }
 
         chunk_id_t old_chunk_id;
         chunk_id.read(old_chunk_id, (bit<32>) slot_id);
 
-        if (old_chunk_id == hdr.sml.chunk_id) {
+        if (old_chunk_id == hdr.sml_header.chunk_id) {
           tuple<bool, bool> entrance_result = enter_gate(completion_gate, slot_id, rank);
           bool first_packet_from_rank = entrance_result[0];
           bool reduce_complete = entrance_result[1];
 
           bit<2048> chunk_value;
           if (first_packet_from_rank) {
-            chunk_value = accumulate_chunk(chunk, slot_id, hdr.sml.chunk);
+            log_msg("SML: Accumulating onto chunk {} from rank {}", {hdr.sml_header.chunk_id, rank});
+            chunk_value = accumulate_chunk(chunk, slot_id, hdr.sml_body.chunk);
           } else {
+            log_msg("SML: Reading chunk {} for rank {}", {hdr.sml_header.chunk_id, rank});
             chunk_value = read_chunk(chunk, slot_id);
           }
 
           if (reduce_complete && first_packet_from_rank) {
             // This is the last packet to arrive for this chunk, broadcast the result
-            hdr.sml.rank = 0xff;
-            hdr.sml.chunk = chunk_value;
+            hdr.sml_header.rank = 0xff;
+            hdr.sml_header.ack_chunk_id = 0xff;
+            hdr.sml_body.chunk = chunk_value;
             standard_metadata.mcast_grp = 2;
+            log_msg("SML: Broadcasting chunk {}", {hdr.sml_header.chunk_id});
           } else if (reduce_complete && !first_packet_from_rank) {
             // The worker has resent the packet and the the computation is complete.
             // Resend the result
-            hdr.sml.rank = 0xff;
-            hdr.sml.chunk = chunk_value;
+            hdr.sml_header.rank = 0xff;
+            hdr.sml_header.ack_chunk_id = 0xff;
+            hdr.sml_body.chunk = chunk_value;
 
             ipv4_addr_t swap_ip = hdr.ipv4.source_address;
             hdr.ipv4.source_address = hdr.ipv4.target_address;
@@ -403,6 +412,7 @@ control TheIngress(inout headers hdr,
             hdr.eth.dstAddr = swap_mac;
 
             standard_metadata.egress_spec = standard_metadata.ingress_port;
+            log_msg("SML: Resending chunk {} to rank {}", {hdr.sml_header.chunk_id, rank});
           } else {
             // The computation is not complete, we can't resend the result yet.
             mark_to_drop(standard_metadata);
@@ -411,12 +421,15 @@ control TheIngress(inout headers hdr,
         } else if (old_chunk_id == 0) {
           // (Re-)initialize the registers
           enter_and_reset_gate(completion_gate, slot_id, rank);
-          chunk.write((bit<32>) slot_id, hdr.sml.chunk);
-          chunk_id.write((bit<32>) slot_id, hdr.sml.chunk_id);
+          chunk.write((bit<32>) slot_id, hdr.sml_body.chunk);
+          chunk_id.write((bit<32>) slot_id, hdr.sml_header.chunk_id);
           mark_to_drop(standard_metadata);
+          log_msg("SML: Initializing slot for chunk {} from rank {}", {hdr.sml_header.chunk_id, rank});
         }
 
         release_lock(slot_lock, slot_id);
+      } else {
+        mark_to_drop(standard_metadata);
       }
 
     } else if (hdr.eth.isValid()) {
@@ -453,7 +466,7 @@ control TheEgress(inout headers hdr,
   }
 
   apply {
-    if (hdr.sml.isValid() && standard_metadata.mcast_grp == 2) {
+    if (hdr.sml_header.isValid() && standard_metadata.mcast_grp == 2) {
       // We are broadcasting an accumulation result. Update all addresses
       allreduce_broadcast.apply();
     }
@@ -482,22 +495,7 @@ control TheChecksumComputation(inout headers  hdr, inout metadata meta) {
       HashAlgorithm.csum16
     );
     update_checksum_with_payload(
-      hdr.udp.isValid() && !hdr.sml.isValid(),
-      {
-        hdr.ipv4.source_address,
-        hdr.ipv4.target_address,
-        8w0,
-        hdr.ipv4.protocol,
-        hdr.udp.len,
-        hdr.udp.source_port,
-        hdr.udp.target_port,
-        hdr.udp.len
-      },
-      hdr.udp.checksum,
-      HashAlgorithm.csum16
-    );
-    update_checksum_with_payload(
-      hdr.udp.isValid() && hdr.sml.isValid(),
+      hdr.udp.isValid(),
       {
         hdr.ipv4.source_address,
         hdr.ipv4.target_address,
@@ -507,7 +505,8 @@ control TheChecksumComputation(inout headers  hdr, inout metadata meta) {
         hdr.udp.source_port,
         hdr.udp.target_port,
         hdr.udp.len,
-        hdr.sml
+        hdr.sml_header,
+        hdr.sml_body
       },
       hdr.udp.checksum,
       HashAlgorithm.csum16
@@ -521,7 +520,8 @@ control TheDeparser(packet_out packet, in headers hdr) {
     packet.emit(hdr.arp);
     packet.emit(hdr.ipv4);
     packet.emit(hdr.udp);
-    packet.emit(hdr.sml);
+    packet.emit(hdr.sml_header);
+    packet.emit(hdr.sml_body);
   }
 }
 
