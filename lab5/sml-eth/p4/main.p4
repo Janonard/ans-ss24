@@ -85,6 +85,31 @@ tuple<bool, bool> atomic_enter_bitmap(register<bit<64>> bitmap, in worker_id_t i
 control TheIngress(inout headers hdr,
                    inout metadata meta,
                    inout standard_metadata_t standard_metadata) {
+
+  action forward_eth_packet(bit<9> out_port) {
+    standard_metadata.egress_spec = out_port;
+  }
+
+  action broadcast_eth_packet() {
+    standard_metadata.mcast_grp = 1;
+  }
+
+  action drop_eth_packet() {
+    mark_to_drop(standard_metadata);
+  }
+
+  table decide_eth_forward {
+    key = {
+      hdr.eth.dstAddr: exact;
+    }
+    actions = {
+      forward_eth_packet;
+      broadcast_eth_packet;
+      drop_eth_packet;
+    }
+    default_action = drop_eth_packet();
+  }
+
   register<bit<64>>(1) arrival_bitmap;
   register<bit<2048>>(1) accumulated_chunk;
   register<bit<64>>(1) completion_bitmap;
@@ -124,7 +149,11 @@ control TheIngress(inout headers hdr,
       arrival_bitmap.write(0, 0);
 
       // Broadcast result
-      standard_metadata.mcast_grp = 1;
+      standard_metadata.mcast_grp = 2;
+    } else if (hdr.eth.isValid()) {
+      // Normal packet forwarding
+      decide_eth_forward.apply();
+
     } else {
       mark_to_drop(standard_metadata);
     }
@@ -135,7 +164,7 @@ control TheEgress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
   apply {
-    if (hdr.sml.isValid() && standard_metadata.mcast_grp != 0) {
+    if (hdr.sml.isValid() && standard_metadata.mcast_grp == 2) {
       // We are broadcasting an accumulation result.
       hdr.sml.rank = 0xff;
       hdr.eth.srcAddr = accumulator_mac;
